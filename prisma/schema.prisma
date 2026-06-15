@@ -28,8 +28,10 @@ model User {
   expensesPaid   Expense[]       @relation("ExpensePayer")
   expenseSplits  ExpenseSplit[]  @relation("ExpenseOwedTo")
   eventsCreated  Event[]
-  dmChannels     DMChannel[]     @relation("DMChannelParticipants")
-  sentDMs        DirectMessage[]
+  dmChannels          DMChannel[]     @relation("DMChannelParticipants")
+  sentDMs             DirectMessage[]
+  friendshipsSent     Friendship[]    @relation("FriendshipsSent")
+  friendshipsReceived Friendship[]    @relation("FriendshipsReceived")
 }
 
 // Server (Guild) Model
@@ -177,4 +179,25 @@ model DirectMessage {
   sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
   dmChannelId String
   dmChannel   DMChannel @relation(fields: [dmChannelId], references: [id], onDelete: Cascade)
+}
+
+// Friendship Model for Friend Requests and Status
+model Friendship {
+  id         String           @id @default(uuid())
+  senderId   String
+  sender     User             @relation("FriendshipsSent", fields: [senderId], references: [id], onDelete: Cascade)
+  receiverId String
+  receiver   User             @relation("FriendshipsReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+  status     FriendshipStatus @default(PENDING)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([senderId, receiverId])
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  BLOCKED
 }

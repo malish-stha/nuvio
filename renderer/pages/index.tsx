@@ -15,7 +15,7 @@ import { applyPrimaryThemeColor } from '../lib/theme'
 import { useAuth, useUser, SignIn } from '@clerk/clerk-react'
 import { useMockUser, isClerkConfigured } from '../lib/clerk-fallback'
 import { pusherClient } from '../lib/pusher-client'
-import { MessageSquare, Plus, Settings, LogOut, UserPlus, Trash2, PlusCircle, ChevronDown, Volume2, Edit3, Terminal, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Hash } from 'lucide-react'
+import { MessageSquare, Plus, Settings, LogOut, UserPlus, Trash2, PlusCircle, ChevronDown, Volume2, Edit3, Terminal, Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Hash, Users, Check, X } from 'lucide-react'
 
 export default function HomePage() {
   const { getToken, userId: clerkUserId, signOut: clerkSignOut } = isClerkConfigured ? useAuth() : { getToken: async () => 'mock-token', userId: 'mock-user-12345', signOut: async () => {} }
@@ -28,7 +28,7 @@ export default function HomePage() {
 
   const handleSignOut = async () => {
     if (isClerkConfigured) {
-      await clerkSignOut({ redirectUrl: '/home' })
+      await clerkSignOut({ redirectUrl: '/' })
     } else if (mockContext) {
       mockContext.signOut()
     }
@@ -75,6 +75,15 @@ export default function HomePage() {
   const [dmMessages, setDmMessages] = React.useState<any[]>([])
   const [dmInput, setDmInput] = React.useState('')
   const [dmRecipient, setDmRecipient] = React.useState<any>(null)
+
+  // Friendship & DM Restriction States
+  const [friendsList, setFriendsList] = React.useState<any[]>([])
+  const [pendingIncoming, setPendingIncoming] = React.useState<any[]>([])
+  const [pendingOutgoing, setPendingOutgoing] = React.useState<any[]>([])
+  const [friendsSearchQuery, setFriendsSearchQuery] = React.useState('')
+  const [friendsSearchResults, setFriendsSearchResults] = React.useState<any[]>([])
+  const [activeFriendsSubTab, setActiveFriendsSubTab] = React.useState<'ALL' | 'PENDING' | 'ADD_FRIEND'>('ALL')
+  const [activeDmTab, setActiveDmTab] = React.useState<'friends' | 'chat'>('friends')
 
   // Dialog & Modal Toggles
   const [isCreateServerOpen, setIsCreateServerOpen] = React.useState(false)
@@ -184,9 +193,120 @@ export default function HomePage() {
     }
   }
 
+  const fetchFriendsData = async () => {
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const res = await fetch('/api/friends/list', {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setFriendsList(data.friends || [])
+        setPendingIncoming(data.pendingIncoming || [])
+        setPendingOutgoing(data.pendingOutgoing || [])
+      }
+    } catch (err) {
+      console.error('Failed to fetch friends data:', err)
+    }
+  }
+
+  const handleSendFriendRequest = async (receiverId: string) => {
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const res = await fetch('/api/friends/request', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ receiverId })
+      })
+      if (res.ok) {
+        fetchFriendsData()
+        if (friendsSearchQuery) {
+          handleFriendsSearch(friendsSearchQuery)
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        console.error('Friend request failed:', errData.error || 'Failed to send friend request')
+      }
+    } catch (err) {
+      console.error('Error sending friend request:', err)
+    }
+  }
+
+  const handleAcceptFriendRequest = async (friendshipId: string) => {
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const res = await fetch('/api/friends/accept', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ friendshipId })
+      })
+      if (res.ok) {
+        fetchFriendsData()
+        if (friendsSearchQuery) {
+          handleFriendsSearch(friendsSearchQuery)
+        }
+      }
+    } catch (err) {
+      console.error('Error accepting friend request:', err)
+    }
+  }
+
+  const handleDeclineFriendRequest = async (friendshipId: string) => {
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const res = await fetch('/api/friends/decline', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ friendshipId })
+      })
+      if (res.ok) {
+        fetchFriendsData()
+        if (friendsSearchQuery) {
+          handleFriendsSearch(friendsSearchQuery)
+        }
+      }
+    } catch (err) {
+      console.error('Error declining friend request:', err)
+    }
+  }
+
+  const handleFriendsSearch = async (val: string) => {
+    setFriendsSearchQuery(val)
+    if (!val.trim()) {
+      setFriendsSearchResults([])
+      return
+    }
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const res = await fetch(`/api/friends/search?q=${encodeURIComponent(val)}`, {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setFriendsSearchResults(data)
+      }
+    } catch (err) {
+      console.error('Error searching users for friends:', err)
+    }
+  }
+
   React.useEffect(() => {
     if (activeUserId) {
       fetchDmChannels()
+      fetchFriendsData()
     }
   }, [activeUserId])
 
@@ -301,6 +421,33 @@ export default function HomePage() {
     }
   }, [activeDmChannelId, pusherClient])
 
+  // Pusher Friends Real-time Subscription — subscribe to personal user channel
+  // Use a ref to avoid stale closure over friendsSearchQuery inside the event handler
+  const friendsSearchQueryRef = React.useRef(friendsSearchQuery)
+  React.useEffect(() => {
+    friendsSearchQueryRef.current = friendsSearchQuery
+  }, [friendsSearchQuery])
+
+  React.useEffect(() => {
+    if (!pusherClient || !activeUserId) {
+      return
+    }
+
+    const channel = pusherClient.subscribe(`user-${activeUserId}`)
+
+    channel.bind('friend-update', () => {
+      fetchFriendsData()
+      // Also refresh the Add Friend search results if a query is active
+      if (friendsSearchQueryRef.current.trim()) {
+        handleFriendsSearch(friendsSearchQueryRef.current)
+      }
+    })
+
+    return () => {
+      pusherClient.unsubscribe(`user-${activeUserId}`)
+    }
+  }, [activeUserId, pusherClient])
+
   // Send message submit handler
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -338,9 +485,8 @@ export default function HomePage() {
       setActiveChannelId('')
       setActiveChannelName('')
       setActiveChannelType('TEXT')
-      if (dmChannels.length > 0 && !activeDmChannelId) {
-        setActiveDmChannelId(dmChannels[0].id)
-      }
+      setActiveDmChannelId('')
+      setActiveDmTab('friends')
     } else {
       const server = servers.find(s => s.id === serverId)
       if (server) {
@@ -657,6 +803,7 @@ export default function HomePage() {
         })
         setActiveServerId('dms')
         setActiveDmChannelId(channel.id)
+        setActiveDmTab('chat')
         setIsDmSearchOpen(false)
         setUserSearchQuery('')
         setUserSearchResults([])
@@ -1138,7 +1285,13 @@ calculateSplit(150.50, 4);`)
   if (isClerkConfigured && !clerkUserId) {
     return (
       <div className="flex h-screen w-screen bg-[#070a12] items-center justify-center">
-        <SignIn routing="hash" forceRedirectUrl="/home" />
+        <SignIn 
+          routing="hash" 
+          forceRedirectUrl="/" 
+          signUpForceRedirectUrl="/"
+          fallbackRedirectUrl="/"
+          signUpFallbackRedirectUrl="/"
+        />
       </div>
     )
   }
@@ -1296,6 +1449,27 @@ calculateSplit(150.50, 4);`)
           <ScrollArea className="flex-1 px-2 py-3">
             {activeServerId === 'dms' ? (
               <div className="space-y-1">
+                {/* Friends Button (Top of DM Sidebar) */}
+                <div
+                  onClick={() => {
+                    setActiveDmChannelId('')
+                    setActiveDmTab('friends')
+                  }}
+                  className={`px-3 py-2 rounded-xl cursor-pointer flex items-center transition select-none mb-3 ${
+                    activeDmTab === 'friends'
+                      ? 'bg-primary/10 text-primary font-bold shadow-sm'
+                      : 'hover:bg-muted text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Users className="h-4 w-4 mr-2.5 shrink-0" />
+                  <span className="text-xs font-semibold">Friends</span>
+                  {pendingIncoming.length > 0 && (
+                    <span className="ml-auto bg-rose-500 text-white font-extrabold text-[9px] px-1.5 py-0.5 rounded-full leading-none">
+                      {pendingIncoming.length}
+                    </span>
+                  )}
+                </div>
+
                 <div className="px-3 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1 select-none">
                   Direct Messages
                 </div>
@@ -1310,9 +1484,12 @@ calculateSplit(150.50, 4);`)
                     return (
                       <div
                         key={chan.id}
-                        onClick={() => setActiveDmChannelId(chan.id)}
+                        onClick={() => {
+                          setActiveDmChannelId(chan.id)
+                          setActiveDmTab('chat')
+                        }}
                         className={`px-3 py-2 rounded-xl cursor-pointer flex items-center transition select-none ${
-                          activeDmChannelId === chan.id
+                          activeDmChannelId === chan.id && activeDmTab === 'chat'
                             ? 'bg-primary/10 text-primary font-bold'
                             : 'hover:bg-muted text-muted-foreground hover:text-foreground'
                         }`}
@@ -1626,15 +1803,64 @@ calculateSplit(150.50, 4);`)
           <header className="h-12 border-b border-border flex items-center px-6 font-semibold shadow-sm justify-between shrink-0">
             <div className="flex items-center space-x-2 select-none">
               {activeServerId === 'dms' ? (
-                <>
-                  <span className="text-muted-foreground font-semibold text-lg">@</span>
-                  <span>{dmRecipient ? dmRecipient.fullName : 'Direct Messages'}</span>
-                  {dmRecipient?.bio && (
-                    <span className="text-xs text-muted-foreground font-normal ml-2 truncate max-w-[240px]">
-                      — {dmRecipient.bio}
-                    </span>
-                  )}
-                </>
+                activeDmTab === 'friends' ? (
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2 mr-2 text-foreground select-none">
+                      <Users className="h-5 w-5 text-muted-foreground" />
+                      <span className="font-extrabold text-sm">Friends</span>
+                    </div>
+                    <div className="h-4 w-[1px] bg-border" />
+                    <button
+                      onClick={() => setActiveFriendsSubTab('ALL')}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer active:scale-95 ${
+                        activeFriendsSubTab === 'ALL'
+                          ? 'bg-accent text-accent-foreground font-bold shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/10'
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      onClick={() => setActiveFriendsSubTab('PENDING')}
+                      className={`px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer active:scale-95 flex items-center gap-1.5 ${
+                        activeFriendsSubTab === 'PENDING'
+                          ? 'bg-accent text-accent-foreground font-bold shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground hover:bg-muted/10'
+                      }`}
+                    >
+                      <span>Pending</span>
+                      {(pendingIncoming.length + pendingOutgoing.length) > 0 && (
+                        <span className="bg-primary/20 text-primary text-[10px] px-1.5 py-0.5 rounded-full font-bold leading-none">
+                          {pendingIncoming.length + pendingOutgoing.length}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveFriendsSubTab('ADD_FRIEND')
+                        setFriendsSearchQuery('')
+                        setFriendsSearchResults([])
+                      }}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer active:scale-95 ${
+                        activeFriendsSubTab === 'ADD_FRIEND'
+                          ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 font-bold'
+                          : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20 font-bold'
+                      }`}
+                    >
+                      Add Friend
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <span className="text-muted-foreground font-semibold text-lg">@</span>
+                    <span>{dmRecipient ? dmRecipient.fullName : 'Direct Messages'}</span>
+                    {dmRecipient?.bio && (
+                      <span className="text-xs text-muted-foreground font-normal ml-2 truncate max-w-[240px]">
+                        — {dmRecipient.bio}
+                      </span>
+                    )}
+                  </>
+                )
               ) : (
                 <>
                   {activeChannelType === 'VOICE' ? (
@@ -1654,7 +1880,243 @@ calculateSplit(150.50, 4);`)
 
           {/* Messages Log */}
           <div className="flex-1 relative overflow-hidden">
-            {activeServerId === 'dms' ? (
+            {activeServerId === 'dms' && activeDmTab === 'friends' ? (
+              <div className="h-full w-full flex flex-col bg-background p-6 overflow-hidden select-none">
+                {activeFriendsSubTab === 'ALL' && (
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <div className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">
+                      All Friends — {friendsList.length}
+                    </div>
+                    <ScrollArea className="flex-1">
+                      {friendsList.length === 0 ? (
+                        <div className="h-[300px] flex flex-col items-center justify-center text-muted-foreground text-center">
+                          <Users className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                          <p className="text-xs">No friends yet. Head over to the "Add Friend" tab!</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2.5 pr-2">
+                          {friendsList.map(friend => (
+                            <div key={friend.friendshipId} className="flex items-center justify-between p-3.5 bg-card/40 border border-border rounded-xl hover:bg-card transition duration-200">
+                              <div className="flex items-center space-x-3 min-w-0">
+                                <Avatar className="h-10 w-10 border border-border">
+                                  <AvatarImage src={friend.user.imageUrl || undefined} />
+                                  <AvatarFallback className="bg-primary/15 text-primary text-sm font-bold">
+                                    {friend.user.fullName.charAt(0).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="min-w-0">
+                                  <p className="text-sm font-bold text-foreground truncate leading-none mb-1">{friend.user.fullName}</p>
+                                  <p className="text-xs text-muted-foreground truncate leading-none">
+                                    {friend.user.bio || 'Hello there!'}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="flex items-center space-x-2 shrink-0">
+                                <button
+                                  onClick={() => handleStartDm(friend.user.id)}
+                                  className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-bold hover:bg-primary/95 transition active:scale-95 cursor-pointer"
+                                >
+                                  Message
+                                </button>
+                                <button
+                                  onClick={() => handleDeclineFriendRequest(friend.friendshipId)}
+                                  className="p-1.5 hover:bg-rose-500/10 text-muted-foreground hover:text-rose-500 rounded-lg transition active:scale-95 cursor-pointer border border-transparent hover:border-rose-500/20 flex items-center justify-center"
+                                  title="Remove Friend"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </div>
+                )}
+
+                {activeFriendsSubTab === 'PENDING' && (
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <div className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-4">
+                      Pending Requests — {pendingIncoming.length + pendingOutgoing.length}
+                    </div>
+                    <ScrollArea className="flex-1">
+                      {pendingIncoming.length === 0 && pendingOutgoing.length === 0 ? (
+                        <div className="h-[300px] flex flex-col items-center justify-center text-muted-foreground text-center">
+                          <Users className="h-12 w-12 text-muted-foreground/30 mb-3" />
+                          <p className="text-xs">No pending requests!</p>
+                        </div>
+                      ) : (
+                        <div className="space-y-4 pr-2">
+                          {pendingIncoming.length > 0 && (
+                            <div className="space-y-2">
+                              <div className="text-[10px] font-bold text-muted-foreground/80 uppercase tracking-widest">
+                                Incoming Requests ({pendingIncoming.length})
+                              </div>
+                              {pendingIncoming.map(req => (
+                                <div key={req.friendshipId} className="flex items-center justify-between p-3 bg-card/40 border border-border rounded-xl hover:bg-card transition duration-200">
+                                  <div className="flex items-center space-x-3 min-w-0">
+                                    <Avatar className="h-9 w-9 border border-border">
+                                      <AvatarImage src={req.user.imageUrl || undefined} />
+                                      <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
+                                        {req.user.fullName.charAt(0).toUpperCase()}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-foreground truncate leading-none mb-1">{req.user.fullName}</p>
+                                      <p className="text-[10px] text-muted-foreground truncate leading-none">{req.user.bio || 'Wants to connect!'}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center space-x-1.5 shrink-0">
+                                    <button
+                                      onClick={() => handleAcceptFriendRequest(req.friendshipId)}
+                                      className="p-1.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg transition active:scale-95 cursor-pointer border border-emerald-500/20 flex items-center justify-center"
+                                      title="Accept Request"
+                                    >
+                                      <Check className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeclineFriendRequest(req.friendshipId)}
+                                      className="p-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-lg transition active:scale-95 cursor-pointer border border-rose-500/20 flex items-center justify-center"
+                                      title="Decline Request"
+                                    >
+                                      <X className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {pendingOutgoing.length > 0 && (
+                            <div className="space-y-2 pt-2">
+                              <div className="text-[10px] font-bold text-muted-foreground/80 uppercase tracking-widest">
+                                Sent Requests ({pendingOutgoing.length})
+                              </div>
+                              {pendingOutgoing.map(req => (
+                                <div key={req.friendshipId} className="flex items-center justify-between p-3 bg-card/40 border border-border rounded-xl hover:bg-card transition duration-200">
+                                  <div className="flex items-center space-x-3 min-w-0">
+                                    <Avatar className="h-9 w-9 border border-border">
+                                      <AvatarImage src={req.user.imageUrl || undefined} />
+                                      <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
+                                        {req.user.fullName.charAt(0).toUpperCase()}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-foreground truncate leading-none mb-1">{req.user.fullName}</p>
+                                      <p className="text-[10px] text-muted-foreground truncate leading-none">Pending outgoing request</p>
+                                    </div>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeclineFriendRequest(req.friendshipId)}
+                                    className="px-2.5 py-1.5 bg-muted text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 border border-border rounded-lg text-[10px] font-semibold transition active:scale-95 cursor-pointer"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </ScrollArea>
+                  </div>
+                )}
+
+                {activeFriendsSubTab === 'ADD_FRIEND' && (
+                  <div className="flex-1 flex flex-col min-h-0">
+                    <div className="mb-6">
+                      <h3 className="text-sm font-bold uppercase tracking-wider mb-2 text-foreground">Add Friend</h3>
+                      <p className="text-xs text-muted-foreground mb-4">You can add friends with their email or full name.</p>
+                      <div className="flex items-center bg-card border border-border rounded-xl px-4 py-2.5 focus-within:ring-2 focus-within:ring-primary/40 focus-within:border-primary transition-all">
+                        <input
+                          type="text"
+                          value={friendsSearchQuery}
+                          onChange={(e) => handleFriendsSearch(e.target.value)}
+                          placeholder="Enter a username or email address..."
+                          className="flex-1 bg-transparent text-sm text-foreground placeholder-muted-foreground outline-none w-full"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex-1 flex flex-col min-h-0">
+                      <div className="text-xs font-bold text-muted-foreground uppercase tracking-widest mb-3">
+                        Search Results
+                      </div>
+                      <ScrollArea className="flex-1">
+                        {!friendsSearchQuery.trim() ? (
+                          <div className="h-[200px] flex flex-col items-center justify-center text-muted-foreground text-center">
+                            <Users className="h-10 w-10 text-muted-foreground/30 mb-2" />
+                            <p className="text-xs">Type a query to search for users to add!</p>
+                          </div>
+                        ) : friendsSearchResults.length === 0 ? (
+                          <div className="h-[200px] flex flex-col items-center justify-center text-muted-foreground text-center">
+                            <Users className="h-10 w-10 text-muted-foreground/30 mb-2" />
+                            <p className="text-xs">No users found matching "{friendsSearchQuery}"</p>
+                          </div>
+                        ) : (
+                          <div className="space-y-2.5 pr-2">
+                            {friendsSearchResults.map(user => (
+                              <div key={user.id} className="flex items-center justify-between p-3 bg-card/40 border border-border rounded-xl hover:bg-card transition duration-200">
+                                <div className="flex items-center space-x-3 min-w-0">
+                                  <Avatar className="h-9 w-9 border border-border">
+                                    <AvatarImage src={user.imageUrl || undefined} />
+                                    <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
+                                      {user.fullName.charAt(0).toUpperCase()}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-foreground truncate leading-none mb-1">{user.fullName}</p>
+                                    <p className="text-[10px] text-muted-foreground truncate leading-none">{user.bio || 'General User'}</p>
+                                  </div>
+                                </div>
+                                <div className="shrink-0">
+                                  {user.relationship === 'ACCEPTED' ? (
+                                    <button
+                                      onClick={() => handleStartDm(user.id)}
+                                      className="px-3 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-bold hover:bg-primary/95 transition active:scale-95 cursor-pointer"
+                                    >
+                                      Message
+                                    </button>
+                                  ) : user.relationship === 'PENDING_SENT' ? (
+                                    <span className="text-[10px] font-semibold text-muted-foreground px-3 py-1.5 border border-border rounded-lg bg-muted/40">
+                                      Request Sent
+                                    </span>
+                                  ) : user.relationship === 'PENDING_RECEIVED' ? (
+                                    <div className="flex items-center space-x-1.5">
+                                      <button
+                                        onClick={() => handleAcceptFriendRequest(user.friendshipId)}
+                                        className="p-1.5 bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white rounded-lg transition active:scale-95 cursor-pointer border border-emerald-500/20 flex items-center justify-center"
+                                        title="Accept Request"
+                                      >
+                                        <Check className="h-4 w-4" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDeclineFriendRequest(user.friendshipId)}
+                                        className="p-1.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500 hover:text-white rounded-lg transition active:scale-95 cursor-pointer border border-rose-500/20 flex items-center justify-center"
+                                        title="Decline Request"
+                                      >
+                                        <X className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleSendFriendRequest(user.id)}
+                                      className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition active:scale-95 cursor-pointer"
+                                    >
+                                      Add Friend
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </ScrollArea>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : activeServerId === 'dms' ? (
               <ScrollArea className="h-full w-full px-6 py-4">
                 {!activeDmChannelId ? (
                   <div className="h-full flex flex-col items-center justify-center text-center px-6 text-sm text-muted-foreground select-none">
@@ -1776,7 +2238,7 @@ calculateSplit(150.50, 4);`)
           </div>
 
           {/* Chat Form Input */}
-          {(activeServerId === 'dms' || activeChannelType === 'TEXT') && (
+          {((activeServerId === 'dms' && activeDmTab === 'chat') || (activeServerId !== 'dms' && activeChannelType === 'TEXT')) && (
             <div className="px-6 pb-6 pt-2 shrink-0">
               {activeServerId === 'dms' ? (
                 <form onSubmit={handleSendDm} className="relative flex items-center bg-card border border-border rounded-xl px-4 py-2.5 focus-within:ring-2 focus-within:ring-primary/40 focus-within:border-primary transition-all">
@@ -2119,9 +2581,9 @@ calculateSplit(150.50, 4);`)
       <Dialog open={isDmSearchOpen} onOpenChange={setIsDmSearchOpen}>
         <DialogContent className="max-w-md bg-card border border-border rounded-2xl text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold tracking-tight">Direct Message</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">New Direct Message</DialogTitle>
             <DialogDescription className="text-muted-foreground text-xs">
-              Search for users by full name or email to start a private conversation.
+              Search your friends by name or email to start a private conversation.
             </DialogDescription>
           </DialogHeader>
 
@@ -2142,10 +2604,14 @@ calculateSplit(150.50, 4);`)
               {!userSearchQuery ? (
                 <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-muted-foreground select-none">
                   <MessageSquare className="h-8 w-8 text-muted-foreground/30 mb-2 stroke-[1.5]" />
-                  Search registered users to start a private direct message conversation.
+                  Search your friends to start a private direct message conversation.
                 </div>
               ) : userSearchResults.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-8">No users found.</p>
+                <div className="flex flex-col items-center justify-center py-8 text-center text-xs text-muted-foreground select-none">
+                  <Users className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                  <p>No friends found matching that query.</p>
+                  <p className="text-[10px] mt-1 text-muted-foreground/60">Only accepted friends appear here. Use the Friends tab to add new friends.</p>
+                </div>
               ) : (
                 userSearchResults.map((usr) => (
                   <div

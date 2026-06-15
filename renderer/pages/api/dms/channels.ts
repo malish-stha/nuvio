@@ -72,6 +72,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         try {
+            // Verify they are accepted friends
+            const friendship = await db.friendship.findFirst({
+                where: {
+                    status: 'ACCEPTED',
+                    OR: [
+                        { senderId: currentUserId, receiverId: recipientId },
+                        { senderId: recipientId, receiverId: currentUserId }
+                    ]
+                }
+            })
+
+            if (!friendship) {
+                return res.status(403).json({ error: 'You must be accepted friends with this user to direct message them.' })
+            }
+
             // Find if a 2-person DM channel already exists between these users
             const existing = await db.dMChannel.findMany({
                 where: {
