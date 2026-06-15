@@ -1,0 +1,155 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// User Model (Synced from Clerk via webhooks)
+model User {
+  id        String   @id @default(uuid()) // Maps directly to Clerk User ID
+  email     String   @unique
+  fullName  String
+  imageUrl  String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  serversCreated Server[]        @relation("ServerOwner")
+  memberships    Member[]
+  expensesPaid   Expense[]       @relation("ExpensePayer")
+  expenseSplits  ExpenseSplit[]  @relation("ExpenseOwedTo")
+  eventsCreated  Event[]
+}
+
+// Server (Guild) Model
+model Server {
+  id         String   @id @default(uuid())
+  name       String
+  imageUrl   String?  @db.Text
+  inviteCode String   @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relationships
+  ownerId   String
+  owner     User      @relation("ServerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members   Member[]
+  channels  Channel[]
+  events    Event[]
+  expenses  Expense[]
+}
+
+// Member Model (Associates Users with Servers and assigns Roles)
+model Member {
+  id        String     @id @default(uuid())
+  role      MemberRole @default(MEMBER)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  // Relationships
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serverId  String
+  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  messages  Message[]
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MODERATOR
+  MEMBER
+}
+
+// Channel Model (Text, Voice, Whiteboard, or pair programming tab)
+model Channel {
+  id        String      @id @default(uuid())
+  name      String
+  type      ChannelType @default(TEXT)
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  // Relationships
+  serverId  String
+  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  messages  Message[]
+}
+
+enum ChannelType {
+  TEXT
+  VOICE
+  WHITEBOARD
+  PLAYGROUND
+}
+
+// Message Model (Relational messages log)
+model Message {
+  id        String   @id @default(uuid())
+  content   String   @db.Text
+  fileUrl   String?  @db.Text // Public CDN URL from Supabase Storage
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  memberId  String
+  member    Member  @relation(fields: [memberId], references: [id], onDelete: Cascade)
+  channelId String
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+}
+
+// Expense Model (Supports both Personal tracking and shared Server/Group tracker splits)
+model Expense {
+  id          String   @id @default(uuid())
+  description String
+  amount      Decimal  @db.Decimal(10, 2)
+  category    String   // Rent, Groceries, Date night, etc.
+  isPersonal  Boolean  @default(false) // If true, only payer can view it
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  payerId   String
+  payer     User          @relation("ExpensePayer", fields: [payerId], references: [id], onDelete: Cascade)
+  serverId  String?       // Context if logged inside a specific Server/Guild
+  server    Server?       @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  splits    ExpenseSplit[]
+}
+
+// ExpenseSplit Model (Splitwise style: maps split values to participants)
+model ExpenseSplit {
+  id        String   @id @default(uuid())
+  amount    Decimal  @db.Decimal(10, 2) // Amount owed by this user
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  expenseId String
+  expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation("ExpenseOwedTo", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// Event Model (Shared calendars)
+model Event {
+  id          String   @id @default(uuid())
+  title       String
+  description String?  @db.Text
+  startTime   DateTime
+  endTime     DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  serverId    String
+  server      Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  creatorId   String
+  creator     User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+}
