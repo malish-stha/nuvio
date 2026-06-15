@@ -18,14 +18,15 @@ model User {
   email     String   @unique
   fullName  String
   imageUrl  String?  @db.Text
+  bio       String?  @db.Text // <--- Add this line
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relationships
-  serversCreated Server[]        @relation("ServerOwner")
+  serversCreated Server[]       @relation("ServerOwner")
   memberships    Member[]
-  expensesPaid   Expense[]       @relation("ExpensePayer")
-  expenseSplits  ExpenseSplit[]  @relation("ExpenseOwedTo")
+  expensesPaid   Expense[]      @relation("ExpensePayer")
+  expenseSplits  ExpenseSplit[] @relation("ExpenseOwedTo")
   eventsCreated  Event[]
 }
 
@@ -39,12 +40,12 @@ model Server {
   updatedAt  DateTime @updatedAt
 
   // Relationships
-  ownerId   String
-  owner     User      @relation("ServerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
-  members   Member[]
-  channels  Channel[]
-  events    Event[]
-  expenses  Expense[]
+  ownerId  String
+  owner    User      @relation("ServerOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members  Member[]
+  channels Channel[]
+  events   Event[]
+  expenses Expense[]
 }
 
 // Member Model (Associates Users with Servers and assigns Roles)
@@ -55,11 +56,11 @@ model Member {
   updatedAt DateTime   @updatedAt
 
   // Relationships
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  serverId  String
-  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  messages  Message[]
+  userId   String
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  serverId String
+  server   Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  messages Message[]
 }
 
 enum MemberRole {
@@ -78,9 +79,9 @@ model Channel {
   updatedAt DateTime    @updatedAt
 
   // Relationships
-  serverId  String
-  server    Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  messages  Message[]
+  serverId String
+  server   Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  messages Message[]
 }
 
 enum ChannelType {
@@ -110,17 +111,17 @@ model Expense {
   id          String   @id @default(uuid())
   description String
   amount      Decimal  @db.Decimal(10, 2)
-  category    String   // Rent, Groceries, Date night, etc.
+  category    String // Rent, Groceries, Date night, etc.
   isPersonal  Boolean  @default(false) // If true, only payer can view it
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   // Relationships
-  payerId   String
-  payer     User          @relation("ExpensePayer", fields: [payerId], references: [id], onDelete: Cascade)
-  serverId  String?       // Context if logged inside a specific Server/Guild
-  server    Server?       @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  splits    ExpenseSplit[]
+  payerId  String
+  payer    User           @relation("ExpensePayer", fields: [payerId], references: [id], onDelete: Cascade)
+  serverId String? // Context if logged inside a specific Server/Guild
+  server   Server?        @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  splits   ExpenseSplit[]
 }
 
 // ExpenseSplit Model (Splitwise style: maps split values to participants)
@@ -132,9 +133,9 @@ model ExpenseSplit {
 
   // Relationships
   expenseId String
-  expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  expense   Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   userId    String
-  user      User     @relation("ExpenseOwedTo", fields: [userId], references: [id], onDelete: Cascade)
+  user      User    @relation("ExpenseOwedTo", fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // Event Model (Shared calendars)
@@ -148,8 +149,8 @@ model Event {
   updatedAt   DateTime @updatedAt
 
   // Relationships
-  serverId    String
-  server      Server   @relation(fields: [serverId], references: [id], onDelete: Cascade)
-  creatorId   String
-  creator     User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  serverId  String
+  server    Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
+  creatorId String
+  creator   User   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
 }

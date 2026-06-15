@@ -1,6 +1,8 @@
 import { NextApiRequest, NextApiResponse } from 'next'
-import { verifyToken } from '@clerk/backend'
+import { verifyToken, createClerkClient } from '@clerk/backend'
 import { db } from '../../lib/db'
+
+const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
 
 // Helper to authenticate request using Authorization header token
 async function authenticate(req: NextApiRequest) {
@@ -38,18 +40,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userId = (auth as any).sub
 
     try {
-        // Ensure user exists in our database (fallback if webhook hasn't run)
+        // Ensure user exists in our database
         let dbUser = await db.user.findUnique({
             where: { id: userId }
         })
 
-        if (!dbUser) {
-            dbUser = await db.user.create({
-                data: {
+        // If the user doesn't exist or is currently using the placeholder "Nuvio User" name, sync from Clerk
+        if (!dbUser || dbUser.fullName === 'Nuvio User') {
+            let email = `user_${userId}@placeholder.com`
+            let fullName = userId === 'mock-user-12345' ? 'Admin User' : 'Nuvio User'
+            let imageUrl = userId === 'mock-user-12345' ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&h=80' : ''
+
+            if (userId !== 'mock-user-12345' && process.env.CLERK_SECRET_KEY) {
+                try {
+                    const clerkUser = await clerk.users.getUser(userId)
+                    email = clerkUser.emailAddresses[0]?.emailAddress || email
+                    fullName = `${clerkUser.firstName || ''} ${clerkUser.lastName || ''}`.trim() || email.split('@')[0]
+                    imageUrl = clerkUser.imageUrl || imageUrl
+                } catch (clerkErr) {
+                    console.error('Failed to fetch user details from Clerk:', clerkErr)
+                }
+            }
+
+            dbUser = await db.user.upsert({
+                where: { id: userId },
+                update: {
+                    email,
+                    fullName,
+                    imageUrl,
+                },
+                create: {
                     id: userId,
-                    email: userId === 'mock-user-12345' ? 'admin@nuvio.dev' : `user_${userId}@placeholder.com`,
-                    fullName: userId === 'mock-user-12345' ? 'Admin User' : 'Nuvio User',
-                    imageUrl: userId === 'mock-user-12345' ? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&h=80' : '',
+                    email,
+                    fullName,
+                    imageUrl,
                 }
             })
         }
@@ -99,6 +123,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         return res.status(200).json({
+            user: dbUser,
             server,
             channels: server.channels,
         })

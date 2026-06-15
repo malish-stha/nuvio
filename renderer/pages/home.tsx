@@ -16,7 +16,7 @@ import { useMockUser, isClerkConfigured } from '../lib/clerk-fallback'
 import { pusherClient } from '../lib/pusher-client'
 
 export default function HomePage() {
-  const { getToken, userId: clerkUserId } = isClerkConfigured ? useAuth() : { getToken: async () => 'mock-token', userId: 'mock-user-12345' }
+  const { getToken, userId: clerkUserId, signOut: clerkSignOut } = isClerkConfigured ? useAuth() : { getToken: async () => 'mock-token', userId: 'mock-user-12345', signOut: async () => {} }
   const { user: clerkUser } = isClerkConfigured ? useUser() : { user: null }
   const mockContext = isClerkConfigured ? null : useMockUser()
 
@@ -24,9 +24,17 @@ export default function HomePage() {
   const activeUserFullName = isClerkConfigured ? clerkUser?.fullName : mockContext?.user?.fullName
   const activeUserImage = isClerkConfigured ? clerkUser?.imageUrl : mockContext?.user?.imageUrl
 
+  const handleSignOut = async () => {
+    if (isClerkConfigured) {
+      await clerkSignOut({ redirectUrl: '/home' })
+    } else if (mockContext) {
+      mockContext.signOut()
+    }
+  }
 
   const [accentColor, setAccentColor] = React.useState('#5865F2') // Default Discord blurple hex
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
+  const [settingsTab, setSettingsTab] = React.useState<'profile' | 'theme'>('profile')
 
   // Channels, messages and text inputs states
   const [channels, setChannels] = React.useState<any[]>([])
@@ -35,6 +43,13 @@ export default function HomePage() {
   const [messages, setMessages] = React.useState<any[]>([])
   const [chatInput, setChatInput] = React.useState('')
   const [isLoading, setIsLoading] = React.useState(true)
+
+  // User Profile Form States
+  const [dbUser, setDbUser] = React.useState<any>(null)
+  const [profileName, setProfileName] = React.useState('')
+  const [profileAvatar, setProfileAvatar] = React.useState('')
+  const [profileBio, setProfileBio] = React.useState('')
+  const [isSavingProfile, setIsSavingProfile] = React.useState(false)
 
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
 
@@ -65,6 +80,14 @@ export default function HomePage() {
           }
         })
         const data = await res.json()
+
+        if (data.user) {
+          setDbUser(data.user)
+          setProfileName(data.user.fullName || '')
+          setProfileAvatar(data.user.imageUrl || '')
+          setProfileBio(data.user.bio || '')
+        }
+
         if (data.channels && data.channels.length > 0) {
           setChannels(data.channels)
           const generalChan = data.channels.find((c: any) => c.name === 'general')
@@ -111,21 +134,23 @@ export default function HomePage() {
 
   // Pusher Client Subscription
   React.useEffect(() => {
-    if (pusherClient && activeChannelId) {
-      const channel = pusherClient.subscribe(`channel-${activeChannelId}`)
-
-      channel.bind('new-message', (newMessage: any) => {
-        setMessages((prev) => {
-          if (prev.some((m) => m.id === newMessage.id)) return prev
-          return [...prev, newMessage]
-        })
-      })
-
-      return () => {
-        pusherClient.unsubscribe(`channel-${activeChannelId}`)
-      }
+    if (!pusherClient || !activeChannelId) {
+      return
     }
-  }, [activeChannelId])
+
+    const channel = pusherClient.subscribe(`channel-${activeChannelId}`)
+
+    channel.bind('new-message', (newMessage: any) => {
+      setMessages((prev) => {
+        if (prev.some((m) => m.id === newMessage.id)) return prev
+        return [...prev, newMessage]
+      })
+    })
+
+    return () => {
+      pusherClient.unsubscribe(`channel-${activeChannelId}`)
+    }
+  }, [activeChannelId, pusherClient])
 
   // Send message submit handler
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -154,6 +179,57 @@ export default function HomePage() {
       }
     } catch (err) {
       console.error('Error sending message:', err)
+    }
+  }
+
+  // Update profile details handler
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!profileName.trim()) return
+
+    setIsSavingProfile(true)
+    try {
+      // 1. If Clerk is configured and user is loaded, update Clerk user profile first
+      if (isClerkConfigured && clerkUser) {
+        const parts = profileName.trim().split(/\s+/)
+        const firstName = parts[0] || ''
+        const lastName = parts.slice(1).join(' ') || ''
+        await clerkUser.update({
+          firstName,
+          lastName,
+        })
+      }
+
+      // 2. Update local PostgreSQL database (includes custom bio field)
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const res = await fetch('/api/user/profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          fullName: profileName,
+          imageUrl: profileAvatar,
+          bio: profileBio,
+        })
+      })
+
+      if (res.ok) {
+        const updated = await res.json()
+        setDbUser(updated)
+        // Immediately reload messages to reflect name changes in chat logs
+        if (activeChannelId) {
+          fetchMessages(activeChannelId)
+        }
+        setIsSettingsOpen(false)
+      } else {
+        console.error('Failed to update profile in database:', await res.text())
+      }
+    } catch (err) {
+      console.error('Error saving profile:', err)
+    } finally {
+      setIsSavingProfile(false)
     }
   }
 
@@ -269,24 +345,43 @@ export default function HomePage() {
           <div className="h-[52px] bg-muted/50 border-t border-border flex items-center px-3 justify-between">
             <div className="flex items-center space-x-2.5 overflow-hidden">
               <Avatar className="h-8 w-8 ring-2 ring-primary/20">
-                <AvatarImage src={activeUserImage || undefined} alt={activeUserFullName || ''} />
+                <AvatarImage src={dbUser?.imageUrl || activeUserImage || undefined} alt={dbUser?.fullName || activeUserFullName || ''} />
                 <AvatarFallback className="bg-primary/15 text-primary text-xs font-bold">
-                  {(activeUserFullName || 'U').charAt(0).toUpperCase()}
+                  {(dbUser?.fullName || activeUserFullName || 'U').charAt(0).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="overflow-hidden">
-                <p className="text-xs font-bold truncate leading-none mb-0.5 text-foreground">{activeUserFullName || 'Admin User'}</p>
-                <p className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">Owner</p>
+                <p className="text-xs font-bold truncate leading-none mb-0.5 text-foreground">{dbUser?.fullName || activeUserFullName || 'Admin User'}</p>
+                {dbUser?.bio ? (
+                  <p className="text-[9px] text-muted-foreground truncate leading-none">{dbUser.bio}</p>
+                ) : (
+                  <p className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">Owner</p>
+                )}
               </div>
             </div>
 
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-accent/40 transition cursor-pointer active:scale-95 text-lg"
-              title="Open Settings"
-            >
-              ⚙️
-            </button>
+            <div className="flex items-center space-x-1 shrink-0">
+              <button
+                onClick={() => {
+                  setProfileName(dbUser?.fullName || activeUserFullName || '')
+                  setProfileAvatar(dbUser?.imageUrl || activeUserImage || '')
+                  setProfileBio(dbUser?.bio || '')
+                  setSettingsTab('profile')
+                  setIsSettingsOpen(true)
+                }}
+                className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-accent/40 transition cursor-pointer active:scale-95 text-base"
+                title="Open Settings"
+              >
+                ⚙️
+              </button>
+              <button
+                onClick={handleSignOut}
+                className="text-muted-foreground hover:text-rose-500 p-1.5 rounded-lg hover:bg-rose-500/10 transition cursor-pointer active:scale-95 text-base"
+                title="Sign Out"
+              >
+                🚪
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -317,23 +412,33 @@ export default function HomePage() {
               ) : (
                 <div className="space-y-4">
                   {messages.map((msg) => (
-                    <div key={msg.id} className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors">
-                      <Avatar className="h-9 w-9 mt-0.5">
-                        <AvatarImage src={msg.member?.user?.imageUrl || undefined} />
-                        <AvatarFallback className="bg-primary/15 text-primary text-xs font-extrabold">
-                          {(msg.member?.user?.fullName || 'U').charAt(0).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1 overflow-hidden">
-                        <div className="flex items-baseline space-x-2">
-                          <span className="text-xs font-bold hover:underline cursor-pointer">{msg.member?.user?.fullName || 'Anonymous'}</span>
-                          <span className="text-[9px] text-muted-foreground">
-                            {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
+                    <Tooltip key={msg.id}>
+                      <TooltipTrigger render={
+                        <div className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors cursor-pointer">
+                          <Avatar className="h-9 w-9 mt-0.5">
+                            <AvatarImage src={msg.member?.user?.imageUrl || undefined} />
+                            <AvatarFallback className="bg-primary/15 text-primary text-xs font-extrabold">
+                              {(msg.member?.user?.fullName || 'U').charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 overflow-hidden">
+                            <div className="flex items-baseline space-x-2">
+                              <span className="text-xs font-bold hover:underline">{msg.member?.user?.fullName || 'Anonymous'}</span>
+                              <span className="text-[9px] text-muted-foreground">
+                                {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <p className="text-sm text-foreground/90 leading-relaxed break-words">{msg.content}</p>
+                          </div>
                         </div>
-                        <p className="text-sm text-foreground/90 leading-relaxed break-words">{msg.content}</p>
-                      </div>
-                    </div>
+                      } />
+                      {msg.member?.user?.bio && (
+                        <TooltipContent side="right" className="max-w-[200px] break-words">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5">User Bio</p>
+                          <p className="text-xs">{msg.member.user.bio}</p>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
                   ))}
                   <div ref={messagesEndRef} />
                 </div>
@@ -367,51 +472,117 @@ export default function HomePage() {
       <Dialog open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
         <DialogContent className="max-w-md bg-card border border-border rounded-2xl text-foreground">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold tracking-tight">Theme Customization</DialogTitle>
+            <DialogTitle className="text-xl font-bold tracking-tight">User Settings</DialogTitle>
             <DialogDescription className="text-muted-foreground text-xs">
-              Change the look and feel of your desktop experience. Choosing a custom color dynamically re-renders all buttons, hover outlines, and text links.
+              Manage your personal user profile credentials and customise the design/styling theme details.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-5 py-3">
-            <div className="flex items-center justify-between p-3.5 rounded-xl border border-border bg-background/50">
-              <div className="space-y-0.5">
-                <p className="text-sm font-bold">Custom Accent Color</p>
-                <p className="text-[10px] text-muted-foreground font-medium">Pick a custom color code for the UI theme</p>
-              </div>
-              <div className="flex items-center space-x-3">
-                <span className="font-mono text-xs font-semibold text-muted-foreground select-all">{accentColor.toUpperCase()}</span>
+          {/* Setting Tabs */}
+          <div className="flex border-b border-border mb-4 select-none">
+            <button
+              onClick={() => setSettingsTab('profile')}
+              className={`flex-1 py-2 text-sm font-semibold text-center border-b-2 cursor-pointer transition ${settingsTab === 'profile'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+            >
+              My Profile
+            </button>
+            <button
+              onClick={() => setSettingsTab('theme')}
+              className={`flex-1 py-2 text-sm font-semibold text-center border-b-2 cursor-pointer transition ${settingsTab === 'theme'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+            >
+              App Theme
+            </button>
+          </div>
+
+          {settingsTab === 'profile' ? (
+            <form onSubmit={handleSaveProfile} className="space-y-4 py-2">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Full Name</label>
                 <input
-                  type="color"
-                  value={accentColor}
-                  onChange={(e) => handleColorChange(e.target.value)}
-                  className="h-9 w-9 rounded-lg border border-border bg-transparent cursor-pointer p-0.5"
+                  type="text"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  className="w-full bg-background border border-border rounded-xl px-3.5 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  required
                 />
               </div>
-            </div>
 
-            <div className="space-y-2">
-              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Predefined Presets</p>
-              <div className="grid grid-cols-2 gap-2">
-                {presets.map((preset) => (
-                  <button
-                    key={preset.hex}
-                    onClick={() => handleColorChange(preset.hex)}
-                    className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-xs font-semibold text-left border cursor-pointer transition ${accentColor.toLowerCase() === preset.hex.toLowerCase()
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border bg-background/20 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
-                      }`}
-                  >
-                    <span
-                      style={{ backgroundColor: preset.hex }}
-                      className="h-3.5 w-3.5 rounded-full border border-black/20 shrink-0"
-                    />
-                    <span className="truncate">{preset.name}</span>
-                  </button>
-                ))}
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Avatar URL</label>
+                <input
+                  type="text"
+                  value={profileAvatar}
+                  onChange={(e) => setProfileAvatar(e.target.value)}
+                  className="w-full bg-background border border-border rounded-xl px-3.5 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary"
+                  placeholder="https://example.com/avatar.png"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Bio</label>
+                <textarea
+                  value={profileBio}
+                  onChange={(e) => setProfileBio(e.target.value)}
+                  className="w-full bg-background border border-border rounded-xl px-3.5 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary min-h-[80px] resize-none"
+                  placeholder="Tell us about yourself..."
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSavingProfile}
+                className="w-full py-2.5 px-4 rounded-xl bg-primary hover:bg-primary/95 text-primary-foreground font-semibold transition active:scale-[0.98] shadow-lg shadow-primary/10 cursor-pointer disabled:opacity-50"
+              >
+                {isSavingProfile ? 'Saving...' : 'Save Profile'}
+              </button>
+            </form>
+          ) : (
+            <div className="space-y-5 py-3">
+              <div className="flex items-center justify-between p-3.5 rounded-xl border border-border bg-background/50">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-bold">Custom Accent Color</p>
+                  <p className="text-[10px] text-muted-foreground font-medium">Pick a custom color code for the UI theme</p>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <span className="font-mono text-xs font-semibold text-muted-foreground select-all">{accentColor.toUpperCase()}</span>
+                  <input
+                    type="color"
+                    value={accentColor}
+                    onChange={(e) => handleColorChange(e.target.value)}
+                    className="h-9 w-9 rounded-lg border border-border bg-transparent cursor-pointer p-0.5"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Predefined Presets</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {presets.map((preset) => (
+                    <button
+                      key={preset.hex}
+                      onClick={() => handleColorChange(preset.hex)}
+                      className={`flex items-center space-x-2 px-3 py-2 rounded-lg text-xs font-semibold text-left border cursor-pointer transition ${accentColor.toLowerCase() === preset.hex.toLowerCase()
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background/20 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                        }`}
+                    >
+                      <span
+                        style={{ backgroundColor: preset.hex }}
+                        className="h-3.5 w-3.5 rounded-full border border-black/20 shrink-0"
+                      />
+                      <span className="truncate">{preset.name}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </DialogContent>
       </Dialog>
     </React.Fragment>
