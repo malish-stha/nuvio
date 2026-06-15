@@ -18,16 +18,18 @@ model User {
   email     String   @unique
   fullName  String
   imageUrl  String?  @db.Text
-  bio       String?  @db.Text // <--- Add this line
+  bio       String?  @db.Text
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   // Relationships
-  serversCreated Server[]       @relation("ServerOwner")
+  serversCreated Server[]        @relation("ServerOwner")
   memberships    Member[]
-  expensesPaid   Expense[]      @relation("ExpensePayer")
-  expenseSplits  ExpenseSplit[] @relation("ExpenseOwedTo")
+  expensesPaid   Expense[]       @relation("ExpensePayer")
+  expenseSplits  ExpenseSplit[]  @relation("ExpenseOwedTo")
   eventsCreated  Event[]
+  dmChannels     DMChannel[]     @relation("DMChannelParticipants")
+  sentDMs        DirectMessage[]
 }
 
 // Server (Guild) Model
@@ -153,4 +155,26 @@ model Event {
   server    Server @relation(fields: [serverId], references: [id], onDelete: Cascade)
   creatorId String
   creator   User   @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+}
+
+// DM Channel Model (Private direct message conversation between users)
+model DMChannel {
+  id             String          @id @default(uuid())
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  participants   User[]          @relation("DMChannelParticipants")
+  directMessages DirectMessage[]
+}
+
+// Direct Message Model
+model DirectMessage {
+  id          String    @id @default(uuid())
+  content     String    @db.Text
+  fileUrl     String?   @db.Text
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  senderId    String
+  sender      User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  dmChannelId String
+  dmChannel   DMChannel @relation(fields: [dmChannelId], references: [id], onDelete: Cascade)
 }

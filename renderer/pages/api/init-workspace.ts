@@ -78,8 +78,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             })
         }
 
-        // Check if there are any servers for this user
-        let member = await db.member.findFirst({
+        // Get all servers the user is a member of
+        let memberships = await db.member.findMany({
             where: { userId },
             include: {
                 server: {
@@ -90,10 +90,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
         })
 
-        let server
-        if (!member) {
+        let servers = memberships.map(m => m.server)
+
+        if (servers.length === 0) {
             // Create a default server
-            server = await db.server.create({
+            const defaultServer = await db.server.create({
                 data: {
                     name: 'Nuvio Server',
                     inviteCode: Math.random().toString(36).substring(2, 8).toUpperCase(),
@@ -118,14 +119,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     channels: true
                 }
             })
-        } else {
-            server = member.server
+            servers = [defaultServer]
         }
 
         return res.status(200).json({
             user: dbUser,
-            server,
-            channels: server.channels,
+            servers,
         })
     } catch (error: any) {
         console.error('API Init Workspace error:', error)
