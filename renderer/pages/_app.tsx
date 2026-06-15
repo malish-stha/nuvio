@@ -1,6 +1,11 @@
 import type { AppProps } from 'next/app'
-import '../styles/globals.css'
+import { TooltipProvider } from '@/components/ui/tooltip'
+import '../styles/global.css'
 
 export default function App({ Component, pageProps }: AppProps) {
-    return <Component {...pageProps} />
+    return (
+        <TooltipProvider delay={100}>
+            <Component {...pageProps} />
+        </TooltipProvider>
+    )
 }
