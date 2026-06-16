@@ -59,6 +59,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             if (!recipientId) {
                 return res.status(400).json({ error: 'Missing recipientId for initiate action' })
             }
+
+            // Verify they are friends in the database
+            const friendship = await db.friendship.findFirst({
+                where: {
+                    OR: [
+                        { senderId: currentUserId, receiverId: recipientId },
+                        { senderId: recipientId, receiverId: currentUserId }
+                    ],
+                    status: 'ACCEPTED'
+                }
+            })
+
+            if (!friendship) {
+                return res.status(403).json({ error: 'You must be friends to start a voice call' })
+            }
+
             await pusherServer.trigger(`user-${recipientId}`, 'incoming-call', {
                 caller: userDetails,
                 dmChannelId

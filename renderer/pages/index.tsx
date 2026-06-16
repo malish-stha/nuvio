@@ -1240,6 +1240,9 @@ export default function HomePage() {
   const handleColorChange = (hex: string) => {
     setAccentColor(hex)
     applyPrimaryThemeColor(hex)
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nuvio_accent_color', hex)
+    }
   }
 
 

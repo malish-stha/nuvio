@@ -25,6 +25,7 @@
     "clsx": "^2.1.1",
     "electron-serve": "^3.0.0",
     "electron-store": "^11.0.2",
+    "emoji-picker-react": "^4.19.1",
     "lucide-react": "^1.18.0",
     "pg": "^8.21.0",
     "postcss": "^8.5.15",
