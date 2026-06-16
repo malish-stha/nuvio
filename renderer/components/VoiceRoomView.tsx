@@ -1,4 +1,4 @@
-
+import React from 'react'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Mic, MicOff, Headphones, HeadphoneOff, PhoneOff, Monitor, MonitorOff } from 'lucide-react'
 import { VideoPlayer } from './VideoPlayer'
@@ -38,13 +38,33 @@ export const VoiceRoomView = ({
 }: VoiceRoomViewProps) => {
   const activeScreenShare = voiceParticipants.find(p => p.screenStream)
 
+  const [duration, setDuration] = React.useState(0)
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setDuration(prev => prev + 1)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const formatDuration = (sec: number) => {
+    const h = Math.floor(sec / 3600)
+    const m = Math.floor((sec % 3600) / 60)
+    const s = sec % 60
+    const parts = [m.toString().padStart(2, '0'), s.toString().padStart(2, '0')]
+    if (h > 0) {
+      parts.unshift(h.toString().padStart(2, '0'))
+    }
+    return parts.join(':')
+  }
+
   return (
     <div className="h-full flex flex-col bg-muted/20 items-center justify-center p-8 select-none overflow-y-auto">
       <div className="w-full max-w-4xl flex-1 flex flex-col justify-between items-center gap-6">
         <div className="text-center w-full shrink-0">
-          <span className="bg-emerald-500/10 text-emerald-400 text-xs px-3 py-1 rounded-full font-bold border border-emerald-500/20 inline-flex items-center gap-1.5 animate-pulse">
-            <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            Connected to Voice Lounge
+          <span className="bg-emerald-500/10 text-emerald-400 text-xs px-3 py-1 rounded-full font-bold border border-emerald-500/20 inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            Connected to Voice Lounge • {formatDuration(duration)}
           </span>
           <p className="text-xs text-muted-foreground mt-2">Active participants in the channel</p>
         </div>

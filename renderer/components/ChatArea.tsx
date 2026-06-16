@@ -190,6 +190,8 @@ interface ChatAreaProps {
   chatInput: string
   setChatInput: (input: string) => void
   handleSendMessage: (e: React.FormEvent, fileUrl?: string) => void
+  setMessages: React.Dispatch<React.SetStateAction<any[]>>
+  setDmMessages: React.Dispatch<React.SetStateAction<any[]>>
 
   // Scrolling Refs
   messagesEndRef: React.RefObject<HTMLDivElement | null>
@@ -247,6 +249,8 @@ export const ChatArea = ({
   chatInput,
   setChatInput,
   handleSendMessage,
+  setMessages,
+  setDmMessages,
   messagesEndRef,
   dmMessagesEndRef,
   kickSecondsLeft,
@@ -293,6 +297,13 @@ export const ChatArea = ({
       if (!res.ok) {
         const errorText = await res.text()
         throw new Error(errorText || 'Failed to edit message.')
+      } else {
+        const updatedMessage = await res.json()
+        if (isDm) {
+          setDmMessages((prev) => prev.map((m) => m.id === updatedMessage.id ? updatedMessage : m))
+        } else {
+          setMessages((prev) => prev.map((m) => m.id === updatedMessage.id ? updatedMessage : m))
+        }
       }
 
       setEditingMessageId(null)
@@ -322,6 +333,12 @@ export const ChatArea = ({
       if (!res.ok) {
         const errorText = await res.text()
         throw new Error(errorText || 'Failed to delete message.')
+      } else {
+        if (isDm) {
+          setDmMessages((prev) => prev.filter((m) => m.id !== messageId))
+        } else {
+          setMessages((prev) => prev.filter((m) => m.id !== messageId))
+        }
       }
     } catch (err: any) {
       console.error('Error deleting message:', err)
@@ -491,7 +508,7 @@ export const ChatArea = ({
       if (activeServerId === DEFAULT_SERVER_ID) {
         // Send DM
         if (!activeDmChannelId) return
-        await fetch('/api/dms/messages', {
+        const res = await fetch('/api/dms/messages', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -502,10 +519,17 @@ export const ChatArea = ({
             dmChannelId: activeDmChannelId
           })
         })
+        if (res.ok) {
+          const newDm = await res.json()
+          setDmMessages((prev) => {
+            if (prev.some((m) => m.id === newDm.id)) return prev
+            return [...prev, newDm]
+          })
+        }
       } else {
         // Send Channel Message
         if (!activeChannelId) return
-        await fetch('/api/messages', {
+        const res = await fetch('/api/messages', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -516,6 +540,13 @@ export const ChatArea = ({
             channelId: activeChannelId
           })
         })
+        if (res.ok) {
+          const newMessage = await res.json()
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === newMessage.id)) return prev
+            return [...prev, newMessage]
+          })
+        }
       }
     } catch (err) {
       console.error('Failed to send custom message:', err)

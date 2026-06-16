@@ -298,6 +298,13 @@ export default function HomePage() {
     }
   }, [voiceParticipants.length, connectedVoiceChannel])
 
+  // Stop outgoing ringtone when someone joins the voice lobby
+  React.useEffect(() => {
+    if (voiceParticipants.length > 1) {
+      stopOutgoingRing()
+    }
+  }, [voiceParticipants.length])
+
   // Call initialization and cancellation signaling
   // Ref to distinguish "user initiated call" vs "user accepted incoming call"
   const isAcceptingCallRef = React.useRef(false)
@@ -881,6 +888,12 @@ export default function HomePage() {
 
       if (!res.ok) {
         console.error('Failed to send message:', await res.text())
+      } else {
+        const newMessage = await res.json()
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === newMessage.id)) return prev
+          return [...prev, newMessage]
+        })
       }
     } catch (err) {
       console.error('Error sending message:', err)
@@ -940,6 +953,11 @@ export default function HomePage() {
       if (!res.ok) {
         console.error('Failed to send DM:', await res.text())
       } else {
+        const newDm = await res.json()
+        setDmMessages((prev) => {
+          if (prev.some((m) => m.id === newDm.id)) return prev
+          return [...prev, newDm]
+        })
         fetchDmChannels()
       }
     } catch (err) {
@@ -1368,6 +1386,8 @@ export default function HomePage() {
           activeServerId={activeServerId}
           activeDmTab={activeDmTab}
           setActiveDmTab={setActiveDmTab}
+          setMessages={setMessages}
+          setDmMessages={setDmMessages}
           connectedVoiceChannel={connectedVoiceChannel}
           pendingIncoming={pendingIncoming}
           pendingOutgoing={pendingOutgoing}

@@ -192,12 +192,19 @@ export const useVoiceCall = ({
             }))
           }
         } else {
-          const audio = new Audio()
+          let audio = remoteAudioElementsRef.current[peerId]
+          if (!audio) {
+            audio = document.createElement('audio')
+            audio.style.display = 'none'
+            document.body.appendChild(audio)
+            remoteAudioElementsRef.current[peerId] = audio
+          }
           audio.srcObject = remoteStream
           audio.autoplay = true
           audio.muted = isDeafened
+          audio.setAttribute('playsinline', 'true')
+          audio.setAttribute('autoplay', 'true')
           audio.play().catch(err => console.error('Audio play failed:', err))
-          remoteAudioElementsRef.current[peerId] = audio
 
           startAudioAnalysis(peerId, remoteStream)
         }
@@ -326,8 +333,12 @@ export const useVoiceCall = ({
             }
 
             stopAudioAnalysis(data.fromUserId)
-            if (remoteAudioElementsRef.current[data.fromUserId]) {
-              remoteAudioElementsRef.current[data.fromUserId].pause()
+            const audio = remoteAudioElementsRef.current[data.fromUserId]
+            if (audio) {
+              try {
+                audio.pause()
+                audio.remove()
+              } catch (e) { }
               delete remoteAudioElementsRef.current[data.fromUserId]
             }
 
@@ -407,6 +418,7 @@ export const useVoiceCall = ({
       if (audio) {
         try {
           audio.pause()
+          audio.remove()
         } catch (e) {
           console.error("Error pausing remote audio element for", peerId, e)
         }
