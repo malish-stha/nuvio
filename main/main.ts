@@ -35,6 +35,17 @@ app.on('window-all-closed', () => {
   app.quit()
 })
 
+import { desktopCapturer } from 'electron'
+
 ipcMain.on('message', async (event, arg) => {
   event.reply('message', `${arg} World!`)
+})
+
+ipcMain.handle('get-screen-sources', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] })
+  return sources.map(s => ({
+    id: s.id,
+    name: s.name,
+    thumbnailUrl: s.thumbnail.toDataURL()
+  }))
 })

@@ -6,11 +6,11 @@ export default function NextPage() {
   return (
     <React.Fragment>
       <Head>
-        <title>Next - Nextron (basic-lang-typescript)</title>
+        <title>Nuvio</title>
       </Head>
       <div>
         <p>
-          ⚡ Electron + Next.js ⚡ -<Link href="/">Go to home page</Link>
+          Nuvio -<Link href="/">Go to home page</Link>
         </p>
       </div>
     </React.Fragment>
