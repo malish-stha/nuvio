@@ -159,6 +159,103 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
     }
 
-    res.setHeader('Allow', ['GET', 'POST'])
+    if (req.method === 'PATCH') {
+        const auth = await authenticate(req)
+        if (!auth) {
+            return res.status(401).json({ error: 'Unauthorized' })
+        }
+
+        const { messageId, content } = req.body
+
+        if (!messageId) {
+            return res.status(400).json({ error: 'Missing messageId' })
+        }
+        if (!content) {
+            return res.status(400).json({ error: 'Content is required' })
+        }
+
+        try {
+            const currentUserId = (auth as any).sub
+
+            const message = await db.message.findUnique({
+                where: { id: messageId },
+                include: {
+                    member: true
+                }
+            })
+
+            if (!message) {
+                return res.status(404).json({ error: 'Message not found' })
+            }
+
+            if (message.member.userId !== currentUserId) {
+                return res.status(403).json({ error: 'Forbidden: You can only edit your own messages' })
+            }
+
+            const updatedMessage = await db.message.update({
+                where: { id: messageId },
+                data: { content },
+                include: {
+                    member: {
+                        include: {
+                            user: true
+                        }
+                    }
+                }
+            })
+
+            await pusherServer.trigger(`channel-${updatedMessage.channelId}`, 'update-message', updatedMessage)
+
+            return res.status(200).json(updatedMessage)
+        } catch (error: any) {
+            console.error('API Messages PATCH error:', error)
+            return res.status(500).json({ error: error.message || 'Internal Server Error' })
+        }
+    }
+
+    if (req.method === 'DELETE') {
+        const auth = await authenticate(req)
+        if (!auth) {
+            return res.status(401).json({ error: 'Unauthorized' })
+        }
+
+        const messageId = req.query.messageId as string || req.body.messageId
+
+        if (!messageId) {
+            return res.status(400).json({ error: 'Missing messageId' })
+        }
+
+        try {
+            const currentUserId = (auth as any).sub
+
+            const message = await db.message.findUnique({
+                where: { id: messageId },
+                include: {
+                    member: true
+                }
+            })
+
+            if (!message) {
+                return res.status(404).json({ error: 'Message not found' })
+            }
+
+            if (message.member.userId !== currentUserId) {
+                return res.status(403).json({ error: 'Forbidden: You can only delete your own messages' })
+            }
+
+            await db.message.delete({
+                where: { id: messageId }
+            })
+
+            await pusherServer.trigger(`channel-${message.channelId}`, 'delete-message', { messageId })
+
+            return res.status(200).json({ success: true })
+        } catch (error: any) {
+            console.error('API Messages DELETE error:', error)
+            return res.status(500).json({ error: error.message || 'Internal Server Error' })
+        }
+    }
+
+    res.setHeader('Allow', ['GET', 'POST', 'PATCH', 'DELETE'])
     return res.status(405).json({ error: `Method ${req.method} not allowed` })
 }

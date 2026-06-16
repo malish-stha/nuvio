@@ -178,6 +178,86 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
     }
 
-    res.setHeader('Allow', ['GET', 'POST'])
+    if (req.method === 'PATCH') {
+        const { messageId, content } = req.body
+
+        if (!messageId) {
+            return res.status(400).json({ error: 'Missing messageId' })
+        }
+        if (!content) {
+            return res.status(400).json({ error: 'Content is required' })
+        }
+
+        try {
+            const message = await db.directMessage.findUnique({
+                where: { id: messageId }
+            })
+
+            if (!message) {
+                return res.status(404).json({ error: 'Message not found' })
+            }
+
+            if (message.senderId !== currentUserId) {
+                return res.status(403).json({ error: 'Forbidden: You can only edit your own direct messages' })
+            }
+
+            const updatedMessage = await db.directMessage.update({
+                where: { id: messageId },
+                data: { content },
+                include: {
+                    sender: {
+                        select: {
+                            id: true,
+                            fullName: true,
+                            imageUrl: true,
+                            bio: true
+                        }
+                    }
+                }
+            })
+
+            await pusherServer.trigger(`dm-${updatedMessage.dmChannelId}`, 'update-dm', updatedMessage)
+
+            return res.status(200).json(updatedMessage)
+        } catch (error: any) {
+            console.error('API DM Messages PATCH error:', error)
+            return res.status(500).json({ error: error.message || 'Internal Server Error' })
+        }
+    }
+
+    if (req.method === 'DELETE') {
+        const messageId = req.query.messageId as string || req.body.messageId
+
+        if (!messageId) {
+            return res.status(400).json({ error: 'Missing messageId' })
+        }
+
+        try {
+            const message = await db.directMessage.findUnique({
+                where: { id: messageId }
+            })
+
+            if (!message) {
+                return res.status(404).json({ error: 'Message not found' })
+            }
+
+            if (message.senderId !== currentUserId) {
+                return res.status(403).json({ error: 'Forbidden: You can only delete your own direct messages' })
+            }
+
+            await db.directMessage.delete({
+                where: { id: messageId }
+            })
+
+            await pusherServer.trigger(`dm-${message.dmChannelId}`, 'delete-dm', { messageId })
+
+            return res.status(200).json({ success: true })
+        } catch (error: any) {
+            console.error('API DM Messages DELETE error:', error)
+            return res.status(500).json({ error: error.message || 'Internal Server Error' })
+        }
+    }
+
+    res.setHeader('Allow', ['GET', 'POST', 'PATCH', 'DELETE'])
     return res.status(405).json({ error: `Method ${req.method} not allowed` })
 }

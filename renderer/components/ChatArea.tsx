@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { Users, MessageSquare, Volume2, Edit3, Terminal, Phone, PhoneOff, Smile } from 'lucide-react'
+import { Users, MessageSquare, Volume2, Edit3, Terminal, Phone, PhoneOff, Smile, Paperclip, Loader2, X, File as FileIcon, Pencil, Trash2 } from 'lucide-react'
 import { CHANNEL_TYPES, DEFAULT_SERVER_ID, DM_TABS, DmTab, FRIENDS_SUB_TABS, FriendsSubTab } from '../lib/constants'
 import { UserProfilePanel } from './UserProfilePanel'
 
@@ -19,6 +19,59 @@ const EmojiPicker = dynamic(
   }
 )
 
+const renderAttachment = (fileUrl: string | null, onLoad?: () => void) => {
+  if (!fileUrl) return null
+
+  const isImage = fileUrl.match(/\.(jpeg|jpg|gif|png|webp)($|\?)/i) != null
+  const isVideo = fileUrl.match(/\.(mp4|webm|ogg|mov)($|\?)/i) != null
+
+  if (isImage) {
+    return (
+      <div className="mt-1.5 w-fit max-w-[280px] rounded-lg overflow-hidden border border-border shadow-sm bg-muted/10 min-h-[50px]">
+        <img
+          src={fileUrl}
+          alt="Shared Image/GIF"
+          className="max-h-[200px] object-contain w-auto h-auto cursor-pointer hover:opacity-95 transition"
+          onClick={() => window.open(fileUrl, '_blank')}
+          onLoad={onLoad}
+        />
+      </div>
+    )
+  }
+
+  if (isVideo) {
+    return (
+      <div className="mt-1.5 w-fit max-w-[320px] rounded-lg overflow-hidden border border-border shadow-sm bg-muted/10">
+        <video
+          src={fileUrl}
+          controls
+          className="max-h-[200px] w-full"
+        />
+      </div>
+    )
+  }
+
+  const displayName = fileUrl.split('/').pop()?.replace(/^\d+-/, '') || 'Attachment'
+
+  return (
+    <div className="mt-1.5 flex items-center gap-3 p-2.5 bg-card border border-border rounded-xl max-w-[280px] shadow-sm select-none">
+      <div className="bg-primary/10 p-2 rounded-lg text-primary shrink-0">
+        <FileIcon className="h-4.5 w-4.5" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs font-bold truncate text-foreground leading-snug">{displayName}</p>
+        <p className="text-[9px] text-muted-foreground">Attachment</p>
+      </div>
+      <button
+        onClick={() => window.open(fileUrl, '_blank')}
+        className="text-primary hover:underline text-[10px] font-bold cursor-pointer transition shrink-0"
+      >
+        Download
+      </button>
+    </div>
+  )
+}
+
 const isImageUrl = (url: string) => {
   return (
     url.startsWith('http://') || url.startsWith('https://')
@@ -31,15 +84,16 @@ const isImageUrl = (url: string) => {
     )
 }
 
-const renderMessageContent = (content: string, isSidePane = false) => {
+const renderMessageContent = (content: string, isSidePane = false, onLoad?: () => void) => {
   if (isImageUrl(content)) {
     return (
-      <div className={`mt-1.5 w-fit ${isSidePane ? 'max-w-[200px]' : 'max-w-[280px]'} rounded-lg overflow-hidden border border-border shadow-sm bg-muted/10`}>
+      <div className={`mt-1.5 w-fit ${isSidePane ? 'max-w-[200px]' : 'max-w-[280px]'} rounded-lg overflow-hidden border border-border shadow-sm bg-muted/10 min-h-[50px]`}>
         <img
           src={content}
           alt="Shared Image/GIF"
           className={`${isSidePane ? 'max-h-[140px]' : 'max-h-[200px]'} object-contain w-auto h-auto cursor-pointer hover:opacity-95 transition`}
           onClick={() => window.open(content, '_blank')}
+          onLoad={onLoad}
         />
       </div>
     )
@@ -132,10 +186,10 @@ interface ChatAreaProps {
   // Input Forms Props
   dmInput: string
   setDmInput: (input: string) => void
-  handleSendDm: (e: React.FormEvent) => void
+  handleSendDm: (e: React.FormEvent, fileUrl?: string) => void
   chatInput: string
   setChatInput: (input: string) => void
-  handleSendMessage: (e: React.FormEvent) => void
+  handleSendMessage: (e: React.FormEvent, fileUrl?: string) => void
 
   // Scrolling Refs
   messagesEndRef: React.RefObject<HTMLDivElement | null>
@@ -208,8 +262,170 @@ export const ChatArea = ({
   const [gifSearch, setGifSearch] = React.useState('')
   const [gifSearchResults, setGifSearchResults] = React.useState<any[]>([])
 
+  const [attachment, setAttachment] = React.useState<{ url: string; name: string; type: string } | null>(null)
+  const [isUploading, setIsUploading] = React.useState(false)
+  const fileInputRef = React.useRef<HTMLInputElement>(null)
+
+  const [editingMessageId, setEditingMessageId] = React.useState<string | null>(null)
+  const [editInput, setEditInput] = React.useState('')
+
   const emojiPickerRef = React.useRef<HTMLDivElement>(null)
   const gifPickerRef = React.useRef<HTMLDivElement>(null)
+
+  const handleEditMessage = async (messageId: string, isDm: boolean) => {
+    if (!editInput.trim()) return
+
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const endpoint = isDm ? '/api/dms/messages' : '/api/messages'
+      const res = await fetch(endpoint, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          messageId,
+          content: editInput
+        })
+      })
+
+      if (!res.ok) {
+        const errorText = await res.text()
+        throw new Error(errorText || 'Failed to edit message.')
+      }
+
+      setEditingMessageId(null)
+      setEditInput('')
+    } catch (err: any) {
+      console.error('Error editing message:', err)
+      alert(err.message || 'Failed to edit message.')
+    }
+  }
+
+  const handleDeleteMessage = async (messageId: string, isDm: boolean) => {
+    if (!confirm('Are you sure you want to delete this message?')) return
+
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      const endpoint = isDm 
+        ? `/api/dms/messages?messageId=${messageId}` 
+        : `/api/messages?messageId=${messageId}`
+
+      const res = await fetch(endpoint, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      })
+
+      if (!res.ok) {
+        const errorText = await res.text()
+        throw new Error(errorText || 'Failed to delete message.')
+      }
+    } catch (err: any) {
+      console.error('Error deleting message:', err)
+      alert(err.message || 'Failed to delete message.')
+    }
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setIsUploading(true)
+    try {
+      const reader = new FileReader()
+      reader.onloadend = async () => {
+        try {
+          const token = isClerkConfigured ? await getToken() : 'mock-token'
+          const base64Data = reader.result as string
+          const res = await fetch('/api/upload', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              fileName: file.name,
+              fileType: file.type,
+              fileData: base64Data
+            })
+          })
+
+          if (!res.ok) {
+            throw new Error(await res.text())
+          }
+
+          const data = await res.json()
+          setAttachment({
+            url: data.fileUrl,
+            name: file.name,
+            type: file.type
+          })
+        } catch (err) {
+          console.error('File upload api error:', err)
+          alert('Failed to upload file.')
+        } finally {
+          setIsUploading(false)
+        }
+      }
+      reader.readAsDataURL(file)
+    } catch (err) {
+      console.error('File reader error:', err)
+      setIsUploading(false)
+    }
+  }
+
+  const renderAttachmentPreview = () => {
+    if (isUploading) {
+      return (
+        <div className="flex items-center gap-2 p-3 bg-card border border-border rounded-xl mb-3 animate-pulse shadow-sm w-fit min-w-[200px]">
+          <Loader2 className="h-4 w-4 text-primary animate-spin" />
+          <span className="text-xs text-muted-foreground font-semibold">Uploading file...</span>
+        </div>
+      )
+    }
+
+    if (!attachment) return null
+
+    const isImage = attachment.type.startsWith('image/')
+    const isVideo = attachment.type.startsWith('video/')
+
+    return (
+      <div className="relative flex items-center gap-3 p-3 bg-card border border-border rounded-xl mb-3 max-w-[280px] shadow-md group">
+        <button
+          type="button"
+          onClick={() => setAttachment(null)}
+          className="absolute -top-1.5 -right-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-full p-1 shadow-md hover:scale-105 active:scale-95 transition cursor-pointer z-10"
+        >
+          <X className="h-3 w-3" />
+        </button>
+
+        {isImage ? (
+          <div className="h-14 w-14 rounded-lg overflow-hidden border border-border shrink-0 bg-muted">
+            <img src={attachment.url} alt="Upload preview" className="h-full w-full object-cover" />
+          </div>
+        ) : isVideo ? (
+          <div className="h-14 w-14 rounded-lg overflow-hidden border border-border shrink-0 bg-muted flex items-center justify-center relative">
+            <video src={attachment.url} className="h-full w-full object-cover" />
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+              <span className="text-[10px] text-white font-bold uppercase">Video</span>
+            </div>
+          </div>
+        ) : (
+          <div className="h-14 w-14 rounded-lg border border-border shrink-0 bg-primary/10 flex items-center justify-center text-primary">
+            <FileIcon className="h-6 w-6" />
+          </div>
+        )}
+
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold truncate pr-2 text-foreground">{attachment.name}</p>
+          <p className="text-[10px] text-muted-foreground">Ready to send</p>
+        </div>
+      </div>
+    )
+  }
 
   // Click outside to close pickers
   React.useEffect(() => {
@@ -486,7 +702,7 @@ export const ChatArea = ({
                     ) : (
                       <div className="space-y-4">
                         {dmMessages.map((msg) => (
-                          <div key={msg.id} className="flex items-start space-x-2.5 hover:bg-muted/10 p-0.5 rounded transition-colors">
+                          <div key={msg.id} className="flex items-start space-x-2.5 hover:bg-muted/10 p-0.5 rounded transition-colors group relative">
                             <Avatar className="h-7 w-7 shrink-0">
                               <AvatarImage src={msg.sender?.imageUrl || undefined} />
                               <AvatarFallback className="bg-primary/15 text-primary text-[10px] font-bold">
@@ -502,8 +718,67 @@ export const ChatArea = ({
                                   {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </span>
                               </div>
-                              {renderMessageContent(msg.content, true)}
+                              {editingMessageId === msg.id ? (
+                                <div className="mt-1 w-full">
+                                  <input
+                                    type="text"
+                                    value={editInput}
+                                    onChange={(e) => setEditInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        handleEditMessage(msg.id, true)
+                                      } else if (e.key === 'Escape') {
+                                        setEditingMessageId(null)
+                                        setEditInput('')
+                                      }
+                                    }}
+                                    className="w-full bg-background border border-primary/40 rounded px-1.5 py-0.5 text-[10px] text-foreground outline-none focus:ring-1 focus:ring-primary"
+                                    autoFocus
+                                  />
+                                  <p className="text-[8px] text-muted-foreground mt-0.5 select-none">
+                                    esc to cancel · enter to save
+                                  </p>
+                                </div>
+                              ) : (
+                                <>
+                                  {renderMessageContent(msg.content, true, () => dmMessagesEndRef.current?.scrollIntoView({ behavior: 'auto' }))}
+                                  {msg.fileUrl && renderAttachment(msg.fileUrl, () => dmMessagesEndRef.current?.scrollIntoView({ behavior: 'auto' }))}
+                                </>
+                              )}
                             </div>
+                            {msg.senderId === activeUserId && editingMessageId !== msg.id && (
+                              <div className="absolute right-2 top-0.5 bg-card border border-border rounded shadow-md px-1.5 py-0.5 opacity-0 group-hover:opacity-100 transition flex items-center space-x-1.5 shrink-0 z-10 select-none">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setEditingMessageId(msg.id)
+                                    setEditInput(msg.content)
+                                  }}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  className="p-0.5 hover:text-primary transition hover:bg-muted rounded text-muted-foreground cursor-pointer"
+                                  title="Edit message"
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    handleDeleteMessage(msg.id, true)
+                                  }}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  className="p-0.5 hover:text-rose-500 transition hover:bg-muted rounded text-muted-foreground cursor-pointer"
+                                  title="Delete message"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         ))}
 
@@ -576,7 +851,7 @@ export const ChatArea = ({
                       <Tooltip key={msg.id}>
                         <TooltipTrigger
                           render={
-                            <div className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors cursor-pointer">
+                            <div className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors cursor-pointer group relative">
                               <Avatar className="h-9 w-9 mt-0.5">
                                 <AvatarImage src={msg.sender?.imageUrl || undefined} />
                                 <AvatarFallback className="bg-primary/15 text-primary text-xs font-extrabold">
@@ -590,8 +865,67 @@ export const ChatArea = ({
                                     {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                   </span>
                                 </div>
-                                {renderMessageContent(msg.content)}
+                                {editingMessageId === msg.id ? (
+                                  <div className="mt-1 w-full max-w-[500px]">
+                                    <input
+                                      type="text"
+                                      value={editInput}
+                                      onChange={(e) => setEditInput(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          handleEditMessage(msg.id, true)
+                                        } else if (e.key === 'Escape') {
+                                          setEditingMessageId(null)
+                                          setEditInput('')
+                                        }
+                                      }}
+                                      className="w-full bg-background border border-primary/40 rounded px-2 py-1 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                                      autoFocus
+                                    />
+                                    <p className="text-[9px] text-muted-foreground mt-1 select-none">
+                                      escape to cancel · enter to save
+                                    </p>
+                                  </div>
+                                ) : (
+                                  <>
+                                    {renderMessageContent(msg.content, false, () => dmMessagesEndRef.current?.scrollIntoView({ behavior: 'auto' }))}
+                                    {msg.fileUrl && renderAttachment(msg.fileUrl, () => dmMessagesEndRef.current?.scrollIntoView({ behavior: 'auto' }))}
+                                  </>
+                                )}
                               </div>
+                              {msg.senderId === activeUserId && editingMessageId !== msg.id && (
+                                <div className="absolute right-2 top-1.5 bg-card border border-border rounded-lg shadow-lg px-2 py-1 opacity-0 group-hover:opacity-100 transition flex items-center space-x-2 shrink-0 z-10 select-none">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      setEditingMessageId(msg.id)
+                                      setEditInput(msg.content)
+                                    }}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    className="p-1 hover:text-primary transition hover:bg-muted rounded text-muted-foreground cursor-pointer"
+                                    title="Edit message"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      handleDeleteMessage(msg.id, true)
+                                    }}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    className="p-1 hover:text-rose-500 transition hover:bg-muted rounded text-muted-foreground cursor-pointer"
+                                    title="Delete message"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           }
                         />
@@ -658,7 +992,7 @@ export const ChatArea = ({
                     <Tooltip key={msg.id}>
                       <TooltipTrigger
                         render={
-                          <div className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors cursor-pointer">
+                          <div className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors cursor-pointer group relative">
                             <Avatar className="h-9 w-9 mt-0.5">
                               <AvatarImage src={msg.member?.user?.imageUrl || undefined} />
                               <AvatarFallback className="bg-primary/15 text-primary text-xs font-extrabold">
@@ -672,8 +1006,67 @@ export const ChatArea = ({
                                   {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </span>
                               </div>
-                              {renderMessageContent(msg.content, false)}
+                              {editingMessageId === msg.id ? (
+                                <div className="mt-1 w-full max-w-[500px]">
+                                  <input
+                                    type="text"
+                                    value={editInput}
+                                    onChange={(e) => setEditInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        handleEditMessage(msg.id, false)
+                                      } else if (e.key === 'Escape') {
+                                        setEditingMessageId(null)
+                                        setEditInput('')
+                                      }
+                                    }}
+                                    className="w-full bg-background border border-primary/40 rounded px-2 py-1 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                                    autoFocus
+                                  />
+                                  <p className="text-[9px] text-muted-foreground mt-1 select-none">
+                                    escape to cancel · enter to save
+                                  </p>
+                                </div>
+                              ) : (
+                                <>
+                                  {renderMessageContent(msg.content, false, () => messagesEndRef.current?.scrollIntoView({ behavior: 'auto' }))}
+                                  {msg.fileUrl && renderAttachment(msg.fileUrl, () => messagesEndRef.current?.scrollIntoView({ behavior: 'auto' }))}
+                                </>
+                              )}
                             </div>
+                            {(msg.member?.userId === activeUserId || msg.member?.user?.id === activeUserId) && editingMessageId !== msg.id && (
+                              <div className="absolute right-2 top-1.5 bg-card border border-border rounded-lg shadow-lg px-2 py-1 opacity-0 group-hover:opacity-100 transition flex items-center space-x-2 shrink-0 z-10 select-none">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setEditingMessageId(msg.id)
+                                    setEditInput(msg.content)
+                                  }}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  className="p-1 hover:text-primary transition hover:bg-muted rounded text-muted-foreground cursor-pointer"
+                                  title="Edit message"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    handleDeleteMessage(msg.id, false)
+                                  }}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  className="p-1 hover:text-rose-500 transition hover:bg-muted rounded text-muted-foreground cursor-pointer"
+                                  title="Delete message"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         }
                       />
@@ -751,11 +1144,25 @@ export const ChatArea = ({
               </div>
             )}
 
+            {renderAttachmentPreview()}
+
             {activeServerId === DEFAULT_SERVER_ID ? (
               <form
-                onSubmit={handleSendDm}
+                onSubmit={(e) => {
+                  handleSendDm(e, attachment?.url || undefined)
+                  setAttachment(null)
+                }}
                 className="flex items-center bg-card border border-border rounded-xl px-4 py-2 focus-within:ring-2 focus-within:ring-primary/40 focus-within:border-primary transition-all gap-3"
               >
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-muted-foreground hover:text-foreground transition cursor-pointer select-none active:scale-95 shrink-0"
+                  title="Upload file/media"
+                  disabled={isUploading}
+                >
+                  <Paperclip className="h-5 w-5" />
+                </button>
                 <input
                   type="text"
                   value={dmInput}
@@ -787,7 +1194,7 @@ export const ChatArea = ({
                   </button>
                   <button
                     type="submit"
-                    disabled={!dmInput.trim() || !activeDmChannelId}
+                    disabled={(!dmInput.trim() && !attachment) || !activeDmChannelId}
                     className="bg-primary text-primary-foreground h-7 px-3.5 rounded-lg text-xs font-bold hover:bg-primary/95 transition active:scale-95 disabled:opacity-40 disabled:scale-100 cursor-pointer"
                   >
                     Send
@@ -796,9 +1203,21 @@ export const ChatArea = ({
               </form>
             ) : (
               <form
-                onSubmit={handleSendMessage}
+                onSubmit={(e) => {
+                  handleSendMessage(e, attachment?.url || undefined)
+                  setAttachment(null)
+                }}
                 className="flex items-center bg-card border border-border rounded-xl px-4 py-2 focus-within:ring-2 focus-within:ring-primary/40 focus-within:border-primary transition-all gap-3"
               >
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="text-muted-foreground hover:text-foreground transition cursor-pointer select-none active:scale-95 shrink-0"
+                  title="Upload file/media"
+                  disabled={isUploading}
+                >
+                  <Paperclip className="h-5 w-5" />
+                </button>
                 <input
                   type="text"
                   value={chatInput}
@@ -829,7 +1248,7 @@ export const ChatArea = ({
                   </button>
                   <button
                     type="submit"
-                    disabled={!chatInput.trim()}
+                    disabled={!chatInput.trim() && !attachment}
                     className="bg-primary text-primary-foreground h-7 px-3.5 rounded-lg text-xs font-bold hover:bg-primary/95 transition active:scale-95 disabled:opacity-40 disabled:scale-100 cursor-pointer"
                   >
                     Send
@@ -840,6 +1259,14 @@ export const ChatArea = ({
           </div>
         )}
       </main>
+
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        className="hidden"
+        accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar"
+      />
 
       {/* User Profile Panel — slides in from the right when clicking the DM recipient name */}
       {profilePanelOpen && dmRecipient && (

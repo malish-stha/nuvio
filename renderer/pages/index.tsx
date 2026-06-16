@@ -376,15 +376,21 @@ export default function HomePage() {
     }
   }, [voiceChannelToJoin])
 
-  // Auto-scroll chat history to the bottom on new messages
+  // Auto-scroll chat history to the bottom on new messages or channel switch
   React.useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const timer = setTimeout(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [messages, activeChannelId])
 
-  // Auto-scroll DM chat history
+  // Auto-scroll DM chat history on new DMs or DM channel switch
   React.useEffect(() => {
-    dmMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [dmMessages])
+    const timer = setTimeout(() => {
+      dmMessagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [dmMessages, activeDmChannelId])
 
   // Persist navigation state across sessions (skip during initial load to avoid overwriting saved state)
   React.useEffect(() => {
@@ -669,6 +675,7 @@ export default function HomePage() {
 
   React.useEffect(() => {
     if (activeServerId === 'dms' && activeDmChannelId) {
+      setDmMessages([]) // Clear previous channel messages immediately to prevent flash and ensure clean scroll state
       fetchDmMessages(activeDmChannelId)
     }
   }, [activeDmChannelId, activeServerId])
@@ -694,6 +701,7 @@ export default function HomePage() {
 
   React.useEffect(() => {
     if (activeChannelId) {
+      setMessages([]) // Clear previous channel messages immediately to prevent flash and ensure clean scroll state
       fetchMessages(activeChannelId)
     }
   }, [activeChannelId])
@@ -716,6 +724,14 @@ export default function HomePage() {
         }
         return [...prev, newMessage]
       })
+    })
+
+    channel.bind('update-message', (updatedMessage: any) => {
+      setMessages((prev) => prev.map((m) => m.id === updatedMessage.id ? updatedMessage : m))
+    })
+
+    channel.bind('delete-message', (data: { messageId: string }) => {
+      setMessages((prev) => prev.filter((m) => m.id !== data.messageId))
     })
 
     return () => {
@@ -745,12 +761,31 @@ export default function HomePage() {
         return {
           ...c,
           lastMessage: {
+            id: newDm.id,
             content: newDm.content,
             createdAt: newDm.createdAt,
             sender: { id: newDm.senderId, fullName: newDm.sender?.fullName || '' }
           }
         }
       }))
+    })
+
+    channel.bind('update-dm', (updatedDm: any) => {
+      setDmMessages((prev) => prev.map((m) => m.id === updatedDm.id ? updatedDm : m))
+      setDmChannels((prev) => prev.map((c) => {
+        if (c.id !== activeDmChannelId) return c
+        return {
+          ...c,
+          lastMessage: c.lastMessage && c.lastMessage.id === updatedDm.id ? {
+            ...c.lastMessage,
+            content: updatedDm.content
+          } : c.lastMessage
+        }
+      }))
+    })
+
+    channel.bind('delete-dm', (data: { messageId: string }) => {
+      setDmMessages((prev) => prev.filter((m) => m.id !== data.messageId))
     })
 
     return () => {
@@ -822,9 +857,9 @@ export default function HomePage() {
   }, [activeUserId, pusherClient])
 
   // Send message submit handler
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!chatInput.trim()) return
+  const handleSendMessage = async (e: React.FormEvent, fileUrl?: string) => {
+    if (e) e.preventDefault()
+    if (!chatInput.trim() && !fileUrl) return
 
     const currentInput = chatInput
     setChatInput('')
@@ -839,6 +874,7 @@ export default function HomePage() {
         },
         body: JSON.stringify({
           content: currentInput,
+          fileUrl: fileUrl || null,
           channelId: activeChannelId,
         })
       })
@@ -879,9 +915,9 @@ export default function HomePage() {
     }
   }
 
-  const handleSendDm = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!dmInput.trim() || !activeDmChannelId) return
+  const handleSendDm = async (e: React.FormEvent, fileUrl?: string) => {
+    if (e) e.preventDefault()
+    if ((!dmInput.trim() && !fileUrl) || !activeDmChannelId) return
 
     const currentInput = dmInput
     setDmInput('')
@@ -896,6 +932,7 @@ export default function HomePage() {
         },
         body: JSON.stringify({
           content: currentInput,
+          fileUrl: fileUrl || null,
           dmChannelId: activeDmChannelId,
         })
       })
