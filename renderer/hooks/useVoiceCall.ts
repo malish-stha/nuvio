@@ -3,6 +3,7 @@ import { useAuth } from '@clerk/clerk-react'
 import { isClerkConfigured } from '../lib/clerk-fallback'
 import { pusherClient } from '../lib/pusher-client'
 import { RTC_ICE_SERVERS, AUDIO_VAD_THRESHOLD, AUDIO_VAD_HANGOVER_MS, AUDIO_FFT_SIZE } from '../lib/constants'
+import { playJoinSound, playLeaveSound } from '../lib/sounds'
 
 interface UseVoiceCallProps {
   activeUserId: string | null | undefined
@@ -175,14 +176,31 @@ export const useVoiceCall = ({
     pc.ontrack = (event) => {
       const remoteStream = event.streams[0]
       if (remoteStream) {
-        const audio = new Audio()
-        audio.srcObject = remoteStream
-        audio.autoplay = true
-        audio.muted = isDeafened
-        audio.play().catch(err => console.error('Audio play failed:', err))
-        remoteAudioElementsRef.current[peerId] = audio
+        if (event.track.kind === 'video') {
+          setVoiceParticipants(prev => prev.map(p => {
+            if (p.id === peerId) {
+              return { ...p, screenStream: remoteStream, isScreenSharing: true }
+            }
+            return p
+          }))
+          event.track.onended = () => {
+            setVoiceParticipants(prev => prev.map(p => {
+              if (p.id === peerId) {
+                return { ...p, screenStream: null, isScreenSharing: false }
+              }
+              return p
+            }))
+          }
+        } else {
+          const audio = new Audio()
+          audio.srcObject = remoteStream
+          audio.autoplay = true
+          audio.muted = isDeafened
+          audio.play().catch(err => console.error('Audio play failed:', err))
+          remoteAudioElementsRef.current[peerId] = audio
 
-        startAudioAnalysis(peerId, remoteStream)
+          startAudioAnalysis(peerId, remoteStream)
+        }
       }
     }
 
@@ -220,12 +238,14 @@ export const useVoiceCall = ({
         setVoiceParticipants([selfParticipant])
 
         startAudioAnalysis(currentUid, stream)
+        playJoinSound()
 
         if (pusherClient) {
           const voiceChannel = pusherClient.subscribe(`voice-${channelId}`)
 
           voiceChannel.bind('user-joined', (data: any) => {
             if (data.fromUserId === currentUid) return
+            playJoinSound()
 
             setVoiceParticipants(prev => {
               if (prev.some(p => p.id === data.fromUserId)) return prev
@@ -236,7 +256,8 @@ export const useVoiceCall = ({
                 isTalking: false,
                 isLocal: false,
                 isMuted: data.payload?.isMuted,
-                isDeafened: data.payload?.isDeafened
+                isDeafened: data.payload?.isDeafened,
+                isScreenSharing: data.payload?.isScreenSharing
               }]
             })
 
@@ -261,7 +282,8 @@ export const useVoiceCall = ({
                 isTalking: false,
                 isLocal: false,
                 isMuted: data.payload?.isMuted,
-                isDeafened: data.payload?.isDeafened
+                isDeafened: data.payload?.isDeafened,
+                isScreenSharing: data.payload?.isScreenSharing
               }]
             })
 
@@ -295,6 +317,7 @@ export const useVoiceCall = ({
 
           voiceChannel.bind('user-left', (data: any) => {
             if (data.fromUserId === currentUid) return
+            playLeaveSound()
 
             const pc = peerConnectionsRef.current[data.fromUserId]
             if (pc) {
@@ -319,14 +342,15 @@ export const useVoiceCall = ({
                 return {
                   ...p,
                   isMuted: data.payload?.isMuted,
-                  isDeafened: data.payload?.isDeafened
+                  isDeafened: data.payload?.isDeafened,
+                  isScreenSharing: data.payload?.isScreenSharing
                 }
               }
               return p
             }))
           })
 
-          sendSignal(channelId, 'user-joined', { isMuted, isDeafened })
+          sendSignal(channelId, 'user-joined', { isMuted, isDeafened, isScreenSharing })
         }
       })
       .catch(err => {
@@ -335,6 +359,7 @@ export const useVoiceCall = ({
   }
 
   const leaveVoiceChannel = () => {
+    playLeaveSound()
     if (screenStreamRef.current) {
       try {
         screenStreamRef.current.getTracks().forEach(track => track.stop())
@@ -510,14 +535,14 @@ export const useVoiceCall = ({
     }
     setVoiceParticipants(prev => prev.map(p => {
       if (p.isLocal) {
-        return { ...p, isMuted, isDeafened }
+        return { ...p, isMuted, isDeafened, isScreenSharing }
       }
       return p
     }))
     if (connectedVoiceChannel) {
-      sendSignal(connectedVoiceChannel.id, 'user-state-change', { isMuted, isDeafened })
+      sendSignal(connectedVoiceChannel.id, 'user-state-change', { isMuted, isDeafened, isScreenSharing })
     }
-  }, [isMuted, isDeafened])
+  }, [isMuted, isDeafened, isScreenSharing])
 
   React.useEffect(() => {
     Object.values(remoteAudioElementsRef.current).forEach(audio => {

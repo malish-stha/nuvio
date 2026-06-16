@@ -14,6 +14,17 @@ import {
   FRIENDS_SUB_TABS,
   FriendsSubTab
 } from '../lib/constants'
+import {
+  playMessageSound,
+  startIncomingRing,
+  stopIncomingRing,
+  startOutgoingRing,
+  stopOutgoingRing,
+  playLeaveSound,
+  getCustomSounds,
+  saveCustomSound,
+  deleteCustomSound
+} from '../lib/sounds'
 
 import { NavigationSidebar } from '../components/NavigationSidebar'
 import { ChannelSidebar } from '../components/ChannelSidebar'
@@ -40,7 +51,10 @@ export default function HomePage() {
 
   const [accentColor, setAccentColor] = React.useState(DEFAULT_ACCENT_COLOR)
   const [isSettingsOpen, setIsSettingsOpen] = React.useState(false)
-  const [settingsTab, setSettingsTab] = React.useState<'profile' | 'theme'>('profile')
+  const [settingsTab, setSettingsTab] = React.useState<'profile' | 'theme' | 'sounds'>('profile')
+  const [messageSoundId, setMessageSoundId] = React.useState('default')
+  const [incomingRingId, setIncomingRingId] = React.useState('default')
+  const [customSounds, setCustomSounds] = React.useState<any[]>([])
 
   // Channels, messages and text inputs states
   const [channels, setChannels] = React.useState<any[]>([])
@@ -90,6 +104,14 @@ export default function HomePage() {
   const [isInviteOpen, setIsInviteOpen] = React.useState(false)
   const [isDmSearchOpen, setIsDmSearchOpen] = React.useState(false)
   const [voiceChannelToJoin, setVoiceChannelToJoin] = React.useState<any>(null)
+
+  // Call signaling & Kick timer states
+  const [incomingCall, setIncomingCall] = React.useState<{ caller: any; dmChannelId: string } | null>(null)
+  // callerWaiting: set on B's side when B declines — shows A is still in the call lobby
+  const [callerWaiting, setCallerWaiting] = React.useState<{ caller: any; dmChannelId: string } | null>(null)
+  const [kickSecondsLeft, setKickSecondsLeft] = React.useState<number | null>(null)
+  const kickTimerRef = React.useRef<NodeJS.Timeout | null>(null)
+  const kickIntervalRef = React.useRef<NodeJS.Timeout | null>(null)
 
   // Form Inputs
   const [newServerName, setNewServerName] = React.useState('')
@@ -142,6 +164,218 @@ export default function HomePage() {
     }
   }, [])
 
+  // Load sound preferences and custom sounds on mount
+  React.useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedMsg = localStorage.getItem('nuvio_sound_message') || 'default'
+      const savedRing = localStorage.getItem('nuvio_sound_ring') || 'default'
+      setMessageSoundId(savedMsg)
+      setIncomingRingId(savedRing)
+
+      const loadSounds = async () => {
+        try {
+          const sounds = await getCustomSounds()
+          setCustomSounds(sounds)
+        } catch (e) {
+          console.warn('IndexedDB custom sounds load failed:', e)
+        }
+      }
+      loadSounds()
+    }
+  }, [])
+
+  const handleMessageSoundChange = (id: string) => {
+    setMessageSoundId(id)
+    localStorage.setItem('nuvio_sound_message', id)
+  }
+
+  const handleIncomingRingChange = (id: string) => {
+    setIncomingRingId(id)
+    localStorage.setItem('nuvio_sound_ring', id)
+  }
+
+  const handleUploadCustomSound = async (name: string, type: 'message' | 'ringtone', blob: Blob) => {
+    try {
+      await saveCustomSound(name, type, blob)
+      const sounds = await getCustomSounds()
+      setCustomSounds(sounds)
+    } catch (e) {
+      console.error('Failed to upload custom sound:', e)
+      alert('Failed to save custom sound file locally.')
+    }
+  }
+
+  const handleDeleteCustomSound = async (id: string) => {
+    try {
+      await deleteCustomSound(id)
+      
+      // If the deleted sound was selected, reset it to default
+      if (messageSoundId === id) {
+        handleMessageSoundChange('default')
+      }
+      if (incomingRingId === id) {
+        handleIncomingRingChange('default')
+      }
+      
+      const sounds = await getCustomSounds()
+      setCustomSounds(sounds)
+    } catch (e) {
+      console.error('Failed to delete custom sound:', e)
+    }
+  }
+
+  const handleAcceptCall = () => {
+    if (!incomingCall) return
+    stopIncomingRing()
+    const callData = incomingCall
+    setIncomingCall(null)
+    // Clear any lingering callerWaiting for this channel
+    setCallerWaiting(null)
+    setActiveDmChannelId(callData.dmChannelId)
+    setActiveDmTab(DM_TABS.CHAT)
+    // Flag so the connectedVoiceChannel effect skips outgoing ring + initiate signal
+    isAcceptingCallRef.current = true
+    setConnectedVoiceChannel({
+      id: callData.dmChannelId,
+      name: callData.caller.fullName || 'Call',
+      serverId: 'dms'
+    })
+  }
+
+  const handleDeclineCall = async () => {
+    if (!incomingCall) return
+    stopIncomingRing()
+    const callData = incomingCall
+    setIncomingCall(null)
+    // Mark caller as still waiting in lobby so B can see A is still in the call
+    setCallerWaiting({ caller: callData.caller, dmChannelId: callData.dmChannelId })
+    try {
+      const token = isClerkConfigured ? await getToken() : 'mock-token'
+      await fetch('/api/voice/call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          action: 'decline',
+          callerId: callData.caller.id,
+          dmChannelId: callData.dmChannelId
+        })
+      })
+    } catch (e) {
+      console.error('Failed to decline call:', e)
+    }
+  }
+
+  // If B joins the call themselves, clear the callerWaiting indicator
+  React.useEffect(() => {
+    if (connectedVoiceChannel && callerWaiting && connectedVoiceChannel.id === callerWaiting.dmChannelId) {
+      setCallerWaiting(null)
+    }
+  }, [connectedVoiceChannel])
+
+  // Cleanup timers on unmount
+  React.useEffect(() => {
+    return () => {
+      if (kickTimerRef.current) clearTimeout(kickTimerRef.current)
+      if (kickIntervalRef.current) clearInterval(kickIntervalRef.current)
+    }
+  }, [])
+
+  // Cancel/Clear kick timer if someone joins the voice lobby or caller hangs up
+  React.useEffect(() => {
+    if (!connectedVoiceChannel || voiceParticipants.length > 1) {
+      if (kickTimerRef.current) {
+        clearTimeout(kickTimerRef.current)
+        kickTimerRef.current = null
+      }
+      if (kickIntervalRef.current) {
+        clearInterval(kickIntervalRef.current)
+        kickIntervalRef.current = null
+      }
+      setKickSecondsLeft(null)
+    }
+  }, [voiceParticipants.length, connectedVoiceChannel])
+
+  // Call initialization and cancellation signaling
+  // Ref to distinguish "user initiated call" vs "user accepted incoming call"
+  const isAcceptingCallRef = React.useRef(false)
+  const prevConnectedVoiceChannelRef = React.useRef<any>(null)
+  React.useEffect(() => {
+    const prev = prevConnectedVoiceChannelRef.current
+    const curr = connectedVoiceChannel
+
+    if (curr && !prev && curr.serverId === 'dms') {
+      if (isAcceptingCallRef.current) {
+        // B accepted A's call — don't ring or re-signal, just join
+        isAcceptingCallRef.current = false
+      } else {
+        // A is initiating a fresh call to B
+        startOutgoingRing()
+        const triggerCallSignal = async () => {
+          try {
+            const token = isClerkConfigured ? await getToken() : 'mock-token'
+            await fetch('/api/voice/call', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                action: 'initiate',
+                recipientId: dmRecipient?.id,
+                dmChannelId: curr.id
+              })
+            })
+          } catch (e) {
+            console.error('Failed to initiate call:', e)
+          }
+        }
+        triggerCallSignal()
+      }
+    } else if (!curr && prev && prev.serverId === 'dms') {
+      stopOutgoingRing()
+      stopIncomingRing()
+      if (voiceParticipants.length <= 1) {
+        const cancelCallSignal = async () => {
+          try {
+            const token = isClerkConfigured ? await getToken() : 'mock-token'
+            await fetch('/api/voice/call', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                action: 'cancel',
+                recipientId: dmRecipient?.id,
+                dmChannelId: prev.id
+              })
+            })
+          } catch (e) {
+            console.error('Failed to cancel call:', e)
+          }
+        }
+        cancelCallSignal()
+      }
+    }
+
+    prevConnectedVoiceChannelRef.current = curr
+  }, [connectedVoiceChannel, dmRecipient?.id, incomingCall])
+
+  // Play incoming ring tone when the Voice Join confirmation modal is active
+  React.useEffect(() => {
+    if (voiceChannelToJoin) {
+      startIncomingRing()
+    } else {
+      stopIncomingRing()
+    }
+    return () => {
+      stopIncomingRing()
+    }
+  }, [voiceChannelToJoin])
+
   // Auto-scroll chat history to the bottom on new messages
   React.useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -151,6 +385,21 @@ export default function HomePage() {
   React.useEffect(() => {
     dmMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [dmMessages])
+
+  // Persist navigation state across sessions (skip during initial load to avoid overwriting saved state)
+  React.useEffect(() => {
+    if (isLoading || typeof window === 'undefined') return
+    try {
+      localStorage.setItem('nuvio_nav_state', JSON.stringify({
+        serverId: activeServerId,
+        channelId: activeChannelId,
+        channelName: activeChannelName,
+        channelType: activeChannelType,
+        dmChannelId: activeDmChannelId,
+        dmTab: activeDmTab
+      }))
+    } catch (e) { /* storage full or unavailable */ }
+  }, [isLoading, activeServerId, activeChannelId, activeChannelName, activeChannelType, activeDmChannelId, activeDmTab])
 
   // Fetch workspace server & channels configuration
   React.useEffect(() => {
@@ -173,15 +422,63 @@ export default function HomePage() {
 
         if (data.servers && data.servers.length > 0) {
           setServers(data.servers)
-          const firstServer = data.servers[0]
-          setActiveServerId(firstServer.id)
-          setChannels(firstServer.channels || [])
-          if (firstServer.channels && firstServer.channels.length > 0) {
-            const generalChan = firstServer.channels.find((c: any) => c.name === 'general')
-            const initialChan = generalChan || firstServer.channels[0]
-            setActiveChannelId(initialChan.id)
-            setActiveChannelName(initialChan.name)
-            setActiveChannelType(initialChan.type || CHANNEL_TYPES.TEXT)
+
+          // Attempt to restore last visited location from localStorage
+          let savedNav: any = null
+          try {
+            const raw = localStorage.getItem('nuvio_nav_state')
+            if (raw) savedNav = JSON.parse(raw)
+          } catch (e) {}
+
+          let restored = false
+
+          if (savedNav?.serverId === DEFAULT_SERVER_ID) {
+            // User was in the DMs section
+            setActiveServerId(DEFAULT_SERVER_ID)
+            setChannels([])
+            if (savedNav.dmChannelId) {
+              setActiveDmChannelId(savedNav.dmChannelId)
+              setActiveDmTab((savedNav.dmTab as DmTab) || DM_TABS.CHAT)
+            } else {
+              setActiveDmTab((savedNav.dmTab as DmTab) || DM_TABS.FRIENDS)
+            }
+            restored = true
+          } else if (savedNav?.serverId) {
+            // User was in a specific server
+            const savedServer = data.servers.find((s: any) => s.id === savedNav.serverId)
+            if (savedServer) {
+              setActiveServerId(savedServer.id)
+              setChannels(savedServer.channels || [])
+              const savedChan = savedServer.channels?.find((c: any) => c.id === savedNav.channelId)
+              if (savedChan) {
+                // Restore exact channel
+                setActiveChannelId(savedChan.id)
+                setActiveChannelName(savedChan.name)
+                setActiveChannelType(savedChan.type || CHANNEL_TYPES.TEXT)
+              } else if (savedServer.channels?.length > 0) {
+                // Channel no longer exists, fall back to general/first
+                const generalChan = savedServer.channels.find((c: any) => c.name === 'general')
+                const fallback = generalChan || savedServer.channels[0]
+                setActiveChannelId(fallback.id)
+                setActiveChannelName(fallback.name)
+                setActiveChannelType(fallback.type || CHANNEL_TYPES.TEXT)
+              }
+              restored = true
+            }
+          }
+
+          if (!restored) {
+            // No saved state or saved server was deleted — default to first server
+            const firstServer = data.servers[0]
+            setActiveServerId(firstServer.id)
+            setChannels(firstServer.channels || [])
+            if (firstServer.channels && firstServer.channels.length > 0) {
+              const generalChan = firstServer.channels.find((c: any) => c.name === 'general')
+              const initialChan = generalChan || firstServer.channels[0]
+              setActiveChannelId(initialChan.id)
+              setActiveChannelName(initialChan.name)
+              setActiveChannelType(initialChan.type || CHANNEL_TYPES.TEXT)
+            }
           }
         } else {
           setActiveServerId(DEFAULT_SERVER_ID)
@@ -414,6 +711,9 @@ export default function HomePage() {
     channel.bind('new-message', (newMessage: any) => {
       setMessages((prev) => {
         if (prev.some((m) => m.id === newMessage.id)) return prev
+        if (newMessage.member?.userId !== activeUserId) {
+          playMessageSound()
+        }
         return [...prev, newMessage]
       })
     })
@@ -434,8 +734,23 @@ export default function HomePage() {
     channel.bind('new-dm', (newDm: any) => {
       setDmMessages((prev) => {
         if (prev.some((m) => m.id === newDm.id)) return prev
+        if (newDm.senderId !== activeUserId) {
+          playMessageSound()
+        }
         return [...prev, newDm]
       })
+      // Update the lastMessage preview in the sidebar instantly
+      setDmChannels((prev) => prev.map((c) => {
+        if (c.id !== activeDmChannelId) return c
+        return {
+          ...c,
+          lastMessage: {
+            content: newDm.content,
+            createdAt: newDm.createdAt,
+            sender: { id: newDm.senderId, fullName: newDm.sender?.fullName || '' }
+          }
+        }
+      }))
     })
 
     return () => {
@@ -463,6 +778,42 @@ export default function HomePage() {
       if (friendsSearchQueryRef.current.trim()) {
         handleFriendsSearch(friendsSearchQueryRef.current)
       }
+    })
+
+    channel.bind('incoming-call', (data: { caller: any; dmChannelId: string }) => {
+      startIncomingRing()
+      setIncomingCall(data)
+    })
+
+    channel.bind('call-cancelled', (data: { callerId: string; dmChannelId: string }) => {
+      stopIncomingRing()
+      setIncomingCall(null)
+      // A has disconnected — clear the waiting indicator on B's side
+      setCallerWaiting(null)
+    })
+
+    channel.bind('call-declined', (data: { declinerId: string; dmChannelId: string }) => {
+      stopOutgoingRing()
+      setKickSecondsLeft(180)
+      if (kickTimerRef.current) clearTimeout(kickTimerRef.current)
+      if (kickIntervalRef.current) clearInterval(kickIntervalRef.current)
+
+      kickTimerRef.current = setTimeout(() => {
+        setConnectedVoiceChannel(null)
+        playLeaveSound()
+        alert("cant keep you in the call forever")
+        setKickSecondsLeft(null)
+      }, 180000)
+
+      kickIntervalRef.current = setInterval(() => {
+        setKickSecondsLeft(prev => {
+          if (prev === null || prev <= 1) {
+            if (kickIntervalRef.current) clearInterval(kickIntervalRef.current)
+            return null
+          }
+          return prev - 1
+        })
+      }, 1000)
     })
 
     return () => {
@@ -968,6 +1319,8 @@ export default function HomePage() {
           setIsDeafened={setIsDeafened}
           setConnectedVoiceChannel={setConnectedVoiceChannel}
           activeChannelType={activeChannelType}
+          voiceParticipants={voiceParticipants}
+          callerWaiting={callerWaiting}
         />
 
         {/* Chat Area */}
@@ -975,6 +1328,7 @@ export default function HomePage() {
           activeServerId={activeServerId}
           activeDmTab={activeDmTab}
           setActiveDmTab={setActiveDmTab}
+          connectedVoiceChannel={connectedVoiceChannel}
           pendingIncoming={pendingIncoming}
           pendingOutgoing={pendingOutgoing}
           friendsList={friendsList}
@@ -999,6 +1353,7 @@ export default function HomePage() {
           setActiveChannelName={setActiveChannelName}
           setActiveChannelType={setActiveChannelType}
           voiceParticipants={voiceParticipants}
+          kickSecondsLeft={kickSecondsLeft}
           isMuted={isMuted}
           setIsMuted={setIsMuted}
           isDeafened={isDeafened}
@@ -1016,6 +1371,7 @@ export default function HomePage() {
           handleSendMessage={handleSendMessage}
           messagesEndRef={messagesEndRef}
           dmMessagesEndRef={dmMessagesEndRef}
+          callerWaiting={callerWaiting}
         />
       </div>
 
@@ -1034,6 +1390,13 @@ export default function HomePage() {
         isSavingProfile={isSavingProfile}
         accentColor={accentColor}
         handleColorChange={handleColorChange}
+        messageSoundId={messageSoundId}
+        setMessageSoundId={handleMessageSoundChange}
+        incomingRingId={incomingRingId}
+        setIncomingRingId={handleIncomingRingChange}
+        customSounds={customSounds}
+        onUploadCustomSound={handleUploadCustomSound}
+        onDeleteCustomSound={handleDeleteCustomSound}
         isCreateServerOpen={isCreateServerOpen}
         setIsCreateServerOpen={setIsCreateServerOpen}
         joinInviteCode={joinInviteCode}
@@ -1081,6 +1444,9 @@ export default function HomePage() {
         setActiveChannelId={setActiveChannelId}
         setActiveChannelName={setActiveChannelName}
         setActiveChannelType={setActiveChannelType}
+        incomingCall={incomingCall}
+        handleAcceptCall={handleAcceptCall}
+        handleDeclineCall={handleDeclineCall}
       />
     </React.Fragment>
   )

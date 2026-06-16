@@ -8,15 +8,21 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
-import { MessageSquare, Users, Hash, Volume2, Edit3, Terminal, ChevronDown } from 'lucide-react'
+import { MessageSquare, Users, Hash, Volume2, Edit3, Terminal, ChevronDown, Play, Square, Trash2, Upload, Music, Bell, PhoneCall } from 'lucide-react'
 import { THEME_PRESETS, CHANNEL_TYPES, ChannelType } from '../lib/constants'
+import {
+  playPreviewSound,
+  stopPreviewSound,
+  PRESET_MESSAGE_SOUNDS,
+  PRESET_CALL_SOUNDS,
+} from '../lib/sounds'
 
 interface ModalsProps {
   // Settings Dialog
   isSettingsOpen: boolean
   setIsSettingsOpen: (open: boolean) => void
-  settingsTab: 'profile' | 'theme'
-  setSettingsTab: (tab: 'profile' | 'theme') => void
+  settingsTab: 'profile' | 'theme' | 'sounds'
+  setSettingsTab: (tab: 'profile' | 'theme' | 'sounds') => void
   handleSaveProfile: (e: React.FormEvent) => void
   profileName: string
   setProfileName: (name: string) => void
@@ -27,6 +33,15 @@ interface ModalsProps {
   isSavingProfile: boolean
   accentColor: string
   handleColorChange: (color: string) => void
+  
+  // Sound Settings
+  messageSoundId: string
+  setMessageSoundId: (id: string) => void
+  incomingRingId: string
+  setIncomingRingId: (id: string) => void
+  customSounds: any[]
+  onUploadCustomSound: (name: string, type: 'message' | 'ringtone', blob: Blob) => Promise<void>
+  onDeleteCustomSound: (id: string) => Promise<void>
   
   // Create / Join Server Dialog
   isCreateServerOpen: boolean
@@ -90,6 +105,9 @@ interface ModalsProps {
   setActiveChannelId: (id: string) => void
   setActiveChannelName: (name: string) => void
   setActiveChannelType: (type: string) => void
+  incomingCall: { caller: any; dmChannelId: string } | null
+  handleAcceptCall: () => void
+  handleDeclineCall: () => void
 }
 
 export const Modals = ({
@@ -107,6 +125,13 @@ export const Modals = ({
   isSavingProfile,
   accentColor,
   handleColorChange,
+  messageSoundId,
+  setMessageSoundId,
+  incomingRingId,
+  setIncomingRingId,
+  customSounds,
+  onUploadCustomSound,
+  onDeleteCustomSound,
   isCreateServerOpen,
   setIsCreateServerOpen,
   joinInviteCode,
@@ -153,8 +178,42 @@ export const Modals = ({
   setVoiceChannelToJoin,
   setActiveChannelId,
   setActiveChannelName,
-  setActiveChannelType
+  setActiveChannelType,
+  incomingCall,
+  handleAcceptCall,
+  handleDeclineCall
 }: ModalsProps) => {
+  const [uploadName, setUploadName] = React.useState('')
+  const [uploadType, setUploadType] = React.useState<'message' | 'ringtone'>('message')
+  const [activePreviewId, setActivePreviewId] = React.useState<string | null>(null)
+  const [activePreviewType, setActivePreviewType] = React.useState<'message' | 'ringtone' | null>(null)
+
+  React.useEffect(() => {
+    if (!isSettingsOpen) {
+      stopPreviewSound()
+      setActivePreviewId(null)
+      setActivePreviewType(null)
+    }
+  }, [isSettingsOpen])
+
+  const handleTogglePreview = async (soundId: string, type: 'message' | 'ringtone') => {
+    if (activePreviewId === soundId && activePreviewType === type) {
+      stopPreviewSound()
+      setActivePreviewId(null)
+      setActivePreviewType(null)
+    } else {
+      setActivePreviewId(soundId)
+      setActivePreviewType(type)
+      await playPreviewSound(soundId, type)
+      if (type === 'message') {
+        setTimeout(() => {
+          setActivePreviewId((prev) => (prev === soundId ? null : prev))
+          setActivePreviewType((prev) => (prev === type ? null : prev))
+        }, 1500)
+      }
+    }
+  }
+
   return (
     <>
       {/* Settings Modal */}
@@ -170,8 +229,13 @@ export const Modals = ({
           {/* Setting Tabs */}
           <div className="flex border-b border-border mb-4 select-none">
             <button
-              onClick={() => setSettingsTab('profile')}
-              className={`flex-1 py-2 text-sm font-semibold text-center border-b-2 cursor-pointer transition ${settingsTab === 'profile'
+              onClick={() => {
+                setSettingsTab('profile')
+                stopPreviewSound()
+                setActivePreviewId(null)
+                setActivePreviewType(null)
+              }}
+              className={`flex-1 py-2 text-xs font-semibold text-center border-b-2 cursor-pointer transition ${settingsTab === 'profile'
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
@@ -179,17 +243,36 @@ export const Modals = ({
               My Profile
             </button>
             <button
-              onClick={() => setSettingsTab('theme')}
-              className={`flex-1 py-2 text-sm font-semibold text-center border-b-2 cursor-pointer transition ${settingsTab === 'theme'
+              onClick={() => {
+                setSettingsTab('theme')
+                stopPreviewSound()
+                setActivePreviewId(null)
+                setActivePreviewType(null)
+              }}
+              className={`flex-1 py-2 text-xs font-semibold text-center border-b-2 cursor-pointer transition ${settingsTab === 'theme'
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
                 }`}
             >
               App Theme
             </button>
+            <button
+              onClick={() => {
+                setSettingsTab('sounds')
+                stopPreviewSound()
+                setActivePreviewId(null)
+                setActivePreviewType(null)
+              }}
+              className={`flex-1 py-2 text-xs font-semibold text-center border-b-2 cursor-pointer transition ${settingsTab === 'sounds'
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+                }`}
+            >
+              Sounds
+            </button>
           </div>
 
-          {settingsTab === 'profile' ? (
+          {settingsTab === 'profile' && (
             <form onSubmit={handleSaveProfile} className="space-y-4 py-2">
               <div className="space-y-1">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">Full Name</label>
@@ -231,7 +314,9 @@ export const Modals = ({
                 {isSavingProfile ? 'Saving...' : 'Save Profile'}
               </button>
             </form>
-          ) : (
+          )}
+
+          {settingsTab === 'theme' && (
             <div className="space-y-5 py-3">
               <div className="flex items-center justify-between p-3.5 rounded-xl border border-border bg-background/50">
                 <div className="space-y-0.5">
@@ -270,6 +355,231 @@ export const Modals = ({
                   ))}
                 </div>
               </div>
+            </div>
+          )}
+
+          {settingsTab === 'sounds' && (
+            <div className="space-y-4 py-2 text-foreground overflow-y-auto max-h-[420px] pr-1">
+              {/* Message Notification Sound Select */}
+              <div className="p-3.5 rounded-xl border border-border bg-background/50 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Bell className="h-4 w-4 text-primary" />
+                  <p className="text-sm font-bold">Message Notification Sound</p>
+                </div>
+                <div className="flex items-center gap-2 select-none">
+                  <div className="flex-1 relative">
+                    <select
+                      value={messageSoundId}
+                      onChange={(e) => {
+                        setMessageSoundId(e.target.value)
+                        stopPreviewSound()
+                        setActivePreviewId(null)
+                      }}
+                      className="w-full bg-[#1e1f22] border border-border rounded-xl px-3 py-2 text-xs text-foreground outline-none cursor-pointer font-semibold appearance-none pr-8"
+                    >
+                      <optgroup label="Presets">
+                        {PRESET_MESSAGE_SOUNDS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                      {customSounds.filter(s => s.type === 'message').length > 0 && (
+                        <optgroup label="Custom Uploads">
+                          {customSounds.filter(s => s.type === 'message').map((custom) => (
+                            <option key={custom.id} value={custom.id}>
+                              {custom.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground absolute right-2.5 top-2.5 pointer-events-none" />
+                  </div>
+                  <button
+                    onClick={() => handleTogglePreview(messageSoundId, 'message')}
+                    className={`h-9 w-9 rounded-xl border cursor-pointer flex items-center justify-center transition ${
+                      activePreviewId === messageSoundId && activePreviewType === 'message'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background/50 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {activePreviewId === messageSoundId && activePreviewType === 'message' ? (
+                      <Square className="h-4 w-4 fill-current animate-pulse" />
+                    ) : (
+                      <Play className="h-4 w-4 fill-current" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Call Ringtone Sound Select */}
+              <div className="p-3.5 rounded-xl border border-border bg-background/50 space-y-2">
+                <div className="flex items-center gap-2">
+                  <PhoneCall className="h-4 w-4 text-primary" />
+                  <p className="text-sm font-bold">Incoming Call Ringtone</p>
+                </div>
+                <div className="flex items-center gap-2 select-none">
+                  <div className="flex-1 relative">
+                    <select
+                      value={incomingRingId}
+                      onChange={(e) => {
+                        setIncomingRingId(e.target.value)
+                        stopPreviewSound()
+                        setActivePreviewId(null)
+                        setActivePreviewType(null)
+                      }}
+                      className="w-full bg-[#1e1f22] border border-border rounded-xl px-3 py-2 text-xs text-foreground outline-none cursor-pointer font-semibold appearance-none pr-8"
+                    >
+                      <optgroup label="Presets">
+                        {PRESET_CALL_SOUNDS.map((preset) => (
+                          <option key={preset.id} value={preset.id}>
+                            {preset.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                      {customSounds.filter(s => s.type === 'ringtone').length > 0 && (
+                        <optgroup label="Custom Uploads">
+                          {customSounds.filter(s => s.type === 'ringtone').map((custom) => (
+                            <option key={custom.id} value={custom.id}>
+                              {custom.name}
+                            </option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                    <ChevronDown className="h-4 w-4 text-muted-foreground absolute right-2.5 top-2.5 pointer-events-none" />
+                  </div>
+                  <button
+                    onClick={() => handleTogglePreview(incomingRingId, 'ringtone')}
+                    className={`h-9 w-9 rounded-xl border cursor-pointer flex items-center justify-center transition ${
+                      activePreviewId === incomingRingId && activePreviewType === 'ringtone'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-background/50 hover:bg-muted/40 text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {activePreviewId === incomingRingId && activePreviewType === 'ringtone' ? (
+                      <Square className="h-4 w-4 fill-current animate-pulse" />
+                    ) : (
+                      <Play className="h-4 w-4 fill-current" />
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Upload Custom Audio File */}
+              <div className="p-3.5 rounded-xl border border-border bg-background/50 space-y-3">
+                <div>
+                  <p className="text-xs font-bold">Upload Custom Sound</p>
+                  <p className="text-[10px] text-muted-foreground font-medium mt-0.5">
+                    Upload an MP3/WAV file (Max size 5MB) to use in dropdown lists
+                  </p>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-muted-foreground uppercase">Sound Type</label>
+                    <select
+                      value={uploadType}
+                      onChange={(e) => setUploadType(e.target.value as 'message' | 'ringtone')}
+                      className="w-full bg-[#1e1f22] border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none font-semibold cursor-pointer"
+                    >
+                      <option value="message">Message Chime</option>
+                      <option value="ringtone">Call Ringtone</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-bold text-muted-foreground uppercase">Display Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. My Ping Sound"
+                      value={uploadName}
+                      onChange={(e) => setUploadName(e.target.value)}
+                      className="w-full bg-[#1e1f22] border border-border rounded-lg px-2.5 py-1.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                </div>
+
+                <div className="relative border border-dashed border-border rounded-xl p-4 flex flex-col items-center justify-center bg-background/20 hover:bg-background/40 hover:border-primary/50 transition cursor-pointer select-none">
+                  <input
+                    type="file"
+                    accept="audio/mp3, audio/wav, audio/mpeg, audio/ogg"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0]
+                      if (!file) return
+                      if (file.size > 5 * 1024 * 1024) {
+                        alert('File size exceeds 5MB limit.')
+                        return
+                      }
+                      const finalName = uploadName.trim() || file.name.replace(/\.[^/.]+$/, "")
+                      await onUploadCustomSound(finalName, uploadType, file)
+                      setUploadName('')
+                      e.target.value = ''
+                    }}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                  />
+                  <Upload className="h-5 w-5 text-muted-foreground mb-1" />
+                  <span className="text-[10px] font-semibold text-muted-foreground">Click to upload audio file</span>
+                </div>
+              </div>
+
+              {/* Uploaded Custom Sounds list */}
+              {customSounds.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest px-1">
+                    My Custom Sounds ({customSounds.length})
+                  </p>
+                  <div className="space-y-1.5 max-h-[150px] overflow-y-auto pr-1 select-none">
+                    {customSounds.map((sound) => (
+                      <div
+                        key={sound.id}
+                        className="flex items-center justify-between p-2 rounded-lg border border-border bg-background/30 hover:border-primary/25 transition text-xs"
+                      >
+                        <div className="flex items-center gap-2 overflow-hidden">
+                          <Music className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <div className="overflow-hidden">
+                            <p className="font-bold truncate leading-none mb-0.5">{sound.name}</p>
+                            <p className="text-[8px] text-muted-foreground uppercase leading-none font-semibold">
+                              {sound.type === 'message' ? 'Message' : 'Ringtone'} • {(sound.blob.size / 1024).toFixed(0)} KB
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleTogglePreview(sound.id, sound.type)}
+                            className={`h-7 w-7 rounded-md cursor-pointer flex items-center justify-center transition border ${
+                              activePreviewId === sound.id && activePreviewType === sound.type
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border bg-background/50 hover:bg-muted text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            {activePreviewId === sound.id && activePreviewType === sound.type ? (
+                              <Square className="h-3 w-3 fill-current animate-pulse" />
+                            ) : (
+                              <Play className="h-3 w-3 fill-current" />
+                            )}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              if (confirm(`Delete custom sound "${sound.name}"?`)) {
+                                if (activePreviewId === sound.id) {
+                                  stopPreviewSound()
+                                  setActivePreviewId(null)
+                                }
+                                await onDeleteCustomSound(sound.id)
+                              }
+                            }}
+                            className="h-7 w-7 rounded-md border border-border bg-background/50 hover:bg-rose-500/10 text-muted-foreground hover:text-rose-500 cursor-pointer flex items-center justify-center transition"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
@@ -741,6 +1051,44 @@ export const Modals = ({
               Join Channel
             </button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Incoming Call Popup Modal */}
+      <Dialog open={!!incomingCall} onOpenChange={(open) => { if (!open) handleDeclineCall() }}>
+        <DialogContent className="max-w-xs sm:max-w-sm bg-card/95 border border-border rounded-3xl text-foreground select-none backdrop-blur-md shadow-2xl p-6 flex flex-col items-center text-center">
+          <div className="relative mb-4">
+            <div className="absolute inset-0 bg-primary/20 rounded-full animate-ping duration-1000 scale-150 opacity-40" />
+            <div className="absolute inset-0 bg-emerald-500/10 rounded-full animate-pulse scale-125 opacity-60" />
+            
+            <Avatar className="h-24 w-24 ring-4 ring-emerald-500/30 relative z-10">
+              <AvatarImage src={incomingCall?.caller?.imageUrl || undefined} />
+              <AvatarFallback className="bg-primary/15 text-primary text-3xl font-extrabold flex items-center justify-center">
+                <PhoneCall className="h-10 w-10 text-emerald-500 animate-bounce" />
+              </AvatarFallback>
+            </Avatar>
+          </div>
+
+          <h3 className="text-lg font-bold tracking-tight text-foreground">{incomingCall?.caller?.fullName || 'Incoming Voice Call'}</h3>
+          <p className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+            Incoming call...
+          </p>
+
+          <div className="mt-6 flex w-full gap-3 justify-center">
+            <button
+              onClick={handleDeclineCall}
+              className="flex-1 h-11 bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold rounded-2xl transition active:scale-95 cursor-pointer shadow-lg shadow-rose-600/10 flex items-center justify-center gap-1.5"
+            >
+              Decline
+            </button>
+            <button
+              onClick={handleAcceptCall}
+              className="flex-1 h-11 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-2xl transition active:scale-95 cursor-pointer shadow-lg shadow-emerald-600/10 flex items-center justify-center gap-1.5"
+            >
+              Accept
+            </button>
+          </div>
         </DialogContent>
       </Dialog>
     </>

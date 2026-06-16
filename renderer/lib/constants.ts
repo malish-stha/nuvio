@@ -50,3 +50,25 @@ export const RTC_ICE_SERVERS = [
 export const AUDIO_VAD_THRESHOLD = 25
 export const AUDIO_VAD_HANGOVER_MS = 400
 export const AUDIO_FFT_SIZE = 256
+
+// Audio Sound Path Constants
+export const SOUND_DEMON_SLAYER = '/images/sounds/Demon_Slayer_Infinity_Castle_-_Notification_Sound-655697-mobiles24.mp3'
+export const SOUND_DRAGON_NOTIFICATION_3 = '/images/sounds/dragon-studio-new-notification-3-398649.mp3'
+export const SOUND_DRAGON_NOTIFICATION = '/images/sounds/dragon-studio-notification-sound-effect-372475.mp3'
+export const SOUND_RAVEN_CALL = '/images/sounds/freesound_community-raven-call-72946.mp3'
+export const SOUND_BUBBLE_POPUP = '/images/sounds/mixkit-bubble-pop-up-alert-notification-2357.wav'
+export const SOUND_DOUBLE_BEEP = '/images/sounds/mixkit-double-beep-tone-alert-2868.wav'
+export const SOUND_DRY_POPUP = '/images/sounds/mixkit-dry-pop-up-notification-alert-2356.wav'
+export const SOUND_ELEVATOR_TONE = '/images/sounds/mixkit-elevator-tone-2863.wav'
+export const SOUND_GAME_WAVE_ALARM = '/images/sounds/mixkit-game-notification-wave-alarm-987.wav'
+export const SOUND_GAMING_LOCK = '/images/sounds/mixkit-gaming-lock-2848.wav'
+export const SOUND_LONG_POP = '/images/sounds/mixkit-long-pop-2358.wav'
+export const SOUND_MESSAGE_POP_ALERT = '/images/sounds/mixkit-message-pop-alert-2354.mp3'
+export const SOUND_SCIFI_CLICK = '/images/sounds/mixkit-sci-fi-click-900.wav'
+export const SOUND_SCIFI_CONFIRMATION = '/images/sounds/mixkit-sci-fi-confirmation-914.wav'
+export const SOUND_SOFTWARE_REMOVE = '/images/sounds/mixkit-software-interface-remove-2576.wav'
+export const SOUND_SOFTWARE_START = '/images/sounds/mixkit-software-interface-start-2574.wav'
+export const SOUND_UNIVERSFIELD_NOTIFICATION = '/images/sounds/universfield-new-notification-040-493469.mp3'
+
+export const SOUND_YO_PHONE_LINGING = '/images/sounds/yo_phone_linging.mp3'
+export const SOUND_UNIVERSFIELD_RINGTONE = '/images/sounds/universfield-ringtone-023-376906.mp3'

@@ -5,6 +5,7 @@ import { VideoPlayer } from './VideoPlayer'
 
 interface VoiceRoomViewProps {
   voiceParticipants: any[]
+  kickSecondsLeft: number | null
   isMuted: boolean
   setIsMuted: (muted: boolean) => void
   isDeafened: boolean
@@ -21,6 +22,7 @@ interface VoiceRoomViewProps {
 
 export const VoiceRoomView = ({
   voiceParticipants,
+  kickSecondsLeft,
   isMuted,
   setIsMuted,
   isDeafened,
@@ -46,6 +48,23 @@ export const VoiceRoomView = ({
           </span>
           <p className="text-xs text-muted-foreground mt-2">Active participants in the channel</p>
         </div>
+
+        {kickSecondsLeft !== null && (
+          <div className="w-full max-w-md bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 text-center shrink-0 shadow-lg backdrop-blur-sm animate-pulse">
+            <p className="text-xs font-bold text-rose-400">
+              Call declined. You will be disconnected in:
+            </p>
+            <p className="text-xl font-extrabold text-rose-500 mt-1">
+              {Math.floor(kickSecondsLeft / 60)}:{(kickSecondsLeft % 60).toString().padStart(2, '0')}
+            </p>
+            <div className="w-full bg-[#111214] h-1.5 rounded-full overflow-hidden mt-3 border border-white/5">
+              <div 
+                className="bg-gradient-to-r from-rose-500 to-rose-600 h-full rounded-full transition-all duration-1000 ease-linear"
+                style={{ width: `${(kickSecondsLeft / 180) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
 
         {activeScreenShare && (
           <div className="w-full max-w-3xl bg-black rounded-2xl overflow-hidden border border-border relative aspect-video flex items-center justify-center shadow-2xl shrink-0">
@@ -94,6 +113,11 @@ export const VoiceRoomView = ({
                 {!usr.isLocal && usr.isDeafened && (
                   <span className="absolute bottom-0 left-0 bg-rose-500 text-white rounded-full p-1 border border-card">
                     <HeadphoneOff className="h-3.5 w-3.5" />
+                  </span>
+                )}
+                {usr.isScreenSharing && (
+                  <span className="absolute -top-1 right-0 bg-emerald-600 text-white rounded-full p-1 border border-card animate-pulse" title="Sharing Screen">
+                    <Monitor className="h-3.5 w-3.5" />
                   </span>
                 )}
               </div>

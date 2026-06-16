@@ -19,6 +19,8 @@ import {
   HeadphoneOff,
   Headphones,
   PhoneOff,
+  Phone,
+  Monitor,
   LogOut
 } from 'lucide-react'
 
@@ -72,6 +74,8 @@ interface ChannelSidebarProps {
   setIsDeafened: (deafened: boolean) => void
   setConnectedVoiceChannel: (channel: any) => void
   activeChannelType: string
+  voiceParticipants: any[]
+  callerWaiting?: { caller: any; dmChannelId: string } | null
 }
 
 export const ChannelSidebar = ({
@@ -119,7 +123,9 @@ export const ChannelSidebar = ({
   isDeafened,
   setIsDeafened,
   setConnectedVoiceChannel,
-  activeChannelType
+  activeChannelType,
+  voiceParticipants,
+  callerWaiting,
 }: ChannelSidebarProps) => {
   return (
     <aside className="w-60 bg-card/60 flex flex-col border-r border-border shrink-0">
@@ -226,6 +232,18 @@ export const ChannelSidebar = ({
               dmChannels.map((chan) => {
                 const recipient = chan.participants.find((p: any) => p.id !== activeUserId)
                 if (!recipient) return null
+
+                const isCallActiveInChan = connectedVoiceChannel?.id === chan.id
+                const participant = isCallActiveInChan ? voiceParticipants.find((p: any) => p.id === recipient.id) : null
+                const isRecipientInCall = !!participant
+
+                const isRecipientMuted = participant?.isMuted
+                const isRecipientDeafened = participant?.isDeafened
+                const isRecipientScreenSharing = participant?.isScreenSharing
+
+                // A is still waiting in the call lobby after B declined
+                const isCallerWaiting = callerWaiting?.dmChannelId === chan.id && callerWaiting?.caller?.id === recipient.id
+
                 return (
                   <div
                     key={chan.id}
@@ -239,18 +257,67 @@ export const ChannelSidebar = ({
                         : 'hover:bg-muted text-muted-foreground hover:text-foreground'
                     }`}
                   >
-                    <Avatar className="h-6 w-6 mr-2">
+                    <Avatar className={`h-6 w-6 mr-2 ${
+                      isRecipientInCall 
+                        ? 'ring-2 ring-emerald-500 ring-offset-1 ring-offset-background' 
+                        : isCallerWaiting
+                          ? 'ring-2 ring-amber-500 ring-offset-1 ring-offset-background'
+                          : ''
+                    }`}>
                       <AvatarImage src={recipient.imageUrl || undefined} />
                       <AvatarFallback className="bg-primary/10 text-primary text-[10px] font-bold">
                         {recipient.fullName.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="overflow-hidden">
-                      <p className="text-xs font-semibold truncate leading-none mb-0.5">{recipient.fullName}</p>
+                    <div className="overflow-hidden min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <p className="text-xs font-semibold truncate leading-none mb-0.5">{recipient.fullName}</p>
+                        {isRecipientInCall && (
+                          <span className="flex h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 animate-pulse" title="In Call" />
+                        )}
+                        {isCallerWaiting && !isRecipientInCall && (
+                          <span className="flex h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400 animate-ping" title="Waiting in Call" />
+                        )}
+                      </div>
                       <p className="text-[9px] text-muted-foreground/75 truncate leading-none">
-                        {recipient.bio || 'Hello there!'}
+                        {isRecipientInCall
+                          ? 'Connected to Call'
+                          : isCallerWaiting
+                            ? 'Waiting in call...'
+                            : chan.lastMessage
+                              ? (chan.lastMessage.sender?.id === activeUserId ? 'You: ' : '') + chan.lastMessage.content
+                              : (recipient.bio || 'No messages yet')}
                       </p>
                     </div>
+
+                    {isRecipientInCall && (
+                      <div className="flex items-center space-x-1 shrink-0 ml-2 text-muted-foreground">
+                        {isRecipientScreenSharing && (
+                          <span title="Screen Sharing">
+                            <Monitor className="h-3 w-3 text-emerald-400 animate-pulse" />
+                          </span>
+                        )}
+                        {isRecipientDeafened ? (
+                          <span title="Deafened">
+                            <HeadphoneOff className="h-3 w-3 text-rose-500" />
+                          </span>
+                        ) : isRecipientMuted ? (
+                          <span title="Muted">
+                            <MicOff className="h-3 w-3 text-rose-500" />
+                          </span>
+                        ) : (
+                          <span title="Microphone Active">
+                            <Mic className="h-3 w-3 text-emerald-500" />
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {isCallerWaiting && !isRecipientInCall && (
+                      <div className="shrink-0 ml-2">
+                        <Phone className="h-3 w-3 text-amber-400 animate-pulse" />
+                      </div>
+                    )}
                   </div>
                 )
               })

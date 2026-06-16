@@ -46,6 +46,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                             imageUrl: true,
                             bio: true
                         }
+                    },
+                    directMessages: {
+                        take: 1,
+                        orderBy: { createdAt: 'desc' },
+                        select: {
+                            content: true,
+                            createdAt: true,
+                            sender: {
+                                select: { id: true, fullName: true }
+                            }
+                        }
                     }
                 },
                 orderBy: {
@@ -53,7 +64,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 }
             })
 
-            return res.status(200).json(channels)
+            // Reshape: expose lastMessage at top level for convenience
+            const shaped = channels.map(c => ({
+                ...c,
+                lastMessage: c.directMessages[0] ?? null,
+                directMessages: undefined
+            }))
+
+            return res.status(200).json(shaped)
         } catch (error: any) {
             console.error('API DM Channels GET error:', error)
             return res.status(500).json({ error: error.message || 'Internal Server Error' })

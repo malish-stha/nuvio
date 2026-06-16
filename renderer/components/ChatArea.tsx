@@ -2,7 +2,7 @@ import React from 'react'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { Users, MessageSquare, Volume2, Edit3, Terminal } from 'lucide-react'
+import { Users, MessageSquare, Volume2, Edit3, Terminal, Phone, PhoneOff } from 'lucide-react'
 import { CHANNEL_TYPES, DEFAULT_SERVER_ID, DM_TABS, DmTab, FRIENDS_SUB_TABS, FriendsSubTab } from '../lib/constants'
 
 // Sub views
@@ -10,6 +10,37 @@ import { FriendsView } from './FriendsView'
 import { VoiceRoomView } from './VoiceRoomView'
 import { WhiteboardView } from './WhiteboardView'
 import { PlaygroundView } from './PlaygroundView'
+
+// Discord-style "X started a call — Join the call" system row
+const CallWaitingBanner = ({
+  callerWaiting,
+  onJoin
+}: {
+  callerWaiting: { caller: any; dmChannelId: string }
+  onJoin: () => void
+}) => (
+  <div className="flex items-center gap-3 py-2 select-none group">
+    <div className="h-[1px] flex-1 bg-border/60" />
+    <div className="flex items-center gap-2 bg-card border border-border rounded-2xl px-4 py-2 shadow-md shrink-0 transition-all group-hover:border-emerald-500/30">
+      <div className="relative flex items-center justify-center h-7 w-7 rounded-full bg-emerald-500/15 border border-emerald-500/30 shrink-0">
+        <Phone className="h-3.5 w-3.5 text-emerald-400" />
+        <span className="absolute inset-0 rounded-full bg-emerald-500/10 animate-ping" />
+      </div>
+      <div className="flex items-center gap-1.5 text-xs">
+        <span className="font-bold text-foreground">{callerWaiting.caller?.fullName || 'Someone'}</span>
+        <span className="text-muted-foreground">started a call.</span>
+        <span className="text-border/60 mx-0.5">—</span>
+        <button
+          onClick={onJoin}
+          className="text-emerald-400 hover:text-emerald-300 font-bold hover:underline transition cursor-pointer"
+        >
+          Join the call
+        </button>
+      </div>
+    </div>
+    <div className="h-[1px] flex-1 bg-border/60" />
+  </div>
+)
 
 interface ChatAreaProps {
   activeServerId: string
@@ -40,6 +71,7 @@ interface ChatAreaProps {
   setActiveChannelType: (type: string) => void
 
   // Voice Lounge Props
+  connectedVoiceChannel: any
   voiceParticipants: any[]
   isMuted: boolean
   setIsMuted: (muted: boolean) => void
@@ -62,6 +94,9 @@ interface ChatAreaProps {
   // Scrolling Refs
   messagesEndRef: React.RefObject<HTMLDivElement | null>
   dmMessagesEndRef: React.RefObject<HTMLDivElement | null>
+  kickSecondsLeft: number | null
+  // Caller waiting in lobby (shown as system message in DM chat)
+  callerWaiting?: { caller: any; dmChannelId: string } | null
 }
 
 export const ChatArea = ({
@@ -90,6 +125,7 @@ export const ChatArea = ({
   setActiveChannelId,
   setActiveChannelName,
   setActiveChannelType,
+  connectedVoiceChannel,
   voiceParticipants,
   isMuted,
   setIsMuted,
@@ -107,7 +143,9 @@ export const ChatArea = ({
   setChatInput,
   handleSendMessage,
   messagesEndRef,
-  dmMessagesEndRef
+  dmMessagesEndRef,
+  kickSecondsLeft,
+  callerWaiting
 }: ChatAreaProps) => {
   return (
     <main className="flex-1 flex flex-col bg-background">
@@ -186,6 +224,28 @@ export const ChatArea = ({
             </>
           )}
         </div>
+
+        {activeServerId === DEFAULT_SERVER_ID && activeDmTab === DM_TABS.CHAT && activeDmChannelId && (
+          <div className="flex items-center space-x-2 select-none">
+            {connectedVoiceChannel?.id === activeDmChannelId ? (
+              <button
+                onClick={() => setConnectedVoiceChannel(null)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition active:scale-95 cursor-pointer shadow-sm shadow-rose-600/10"
+              >
+                <PhoneOff className="h-3.5 w-3.5" />
+                <span>End Call</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => setConnectedVoiceChannel({ id: activeDmChannelId, name: dmRecipient?.fullName || 'Call', serverId: 'dms' })}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition active:scale-95 cursor-pointer shadow-sm shadow-emerald-600/10"
+              >
+                <Phone className="h-3.5 w-3.5" />
+                <span>Call</span>
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       {/* Messages Log */}
@@ -205,8 +265,8 @@ export const ChatArea = ({
             handleSendFriendRequest={handleSendFriendRequest}
           />
         ) : activeServerId === DEFAULT_SERVER_ID ? (
-          <ScrollArea className="h-full w-full px-6 py-4">
-            {!activeDmChannelId ? (
+          !activeDmChannelId ? (
+            <ScrollArea className="h-full w-full px-6 py-4">
               <div className="h-full flex flex-col items-center justify-center text-center px-6 text-sm text-muted-foreground select-none">
                 <div className="relative mb-5 flex items-center justify-center">
                   <div className="absolute h-20 w-20 bg-primary/10 rounded-full blur-xl animate-pulse" />
@@ -219,59 +279,174 @@ export const ChatArea = ({
                   Select a DM conversation or click the plus button on the sidebar to search for users!
                 </p>
               </div>
-            ) : dmMessages.length === 0 ? (
-              <div className="h-full flex flex-col justify-end pb-8">
-                <Avatar className="h-16 w-16 mb-4 ring-4 ring-primary/10">
-                  <AvatarImage src={dmRecipient?.imageUrl || undefined} />
-                  <AvatarFallback className="bg-primary/15 text-primary text-2xl font-bold">
-                    {(dmRecipient?.fullName || 'U').charAt(0).toUpperCase()}
-                  </AvatarFallback>
-                </Avatar>
-                <h2 className="text-2xl font-extrabold mb-1">{dmRecipient?.fullName}</h2>
-                <p className="text-sm text-muted-foreground">
-                  This is the beginning of your direct message history with {dmRecipient?.fullName}.
-                </p>
+            </ScrollArea>
+          ) : connectedVoiceChannel?.id === activeDmChannelId ? (
+            <div className="flex flex-col md:flex-row divide-x divide-border h-full overflow-hidden select-none">
+              {/* Left Column: Call / Stream Grid */}
+              <div className="flex-1 h-full overflow-hidden bg-background/50 flex flex-col">
+                <VoiceRoomView
+                  voiceParticipants={voiceParticipants}
+                  kickSecondsLeft={kickSecondsLeft}
+                  isMuted={isMuted}
+                  setIsMuted={setIsMuted}
+                  isDeafened={isDeafened}
+                  setIsDeafened={setIsDeafened}
+                  isScreenSharing={isScreenSharing}
+                  startScreenShare={startScreenShare}
+                  stopScreenShare={stopScreenShare}
+                  setConnectedVoiceChannel={setConnectedVoiceChannel}
+                  channels={channels}
+                  setActiveChannelId={setActiveChannelId}
+                  setActiveChannelName={setActiveChannelName}
+                  setActiveChannelType={setActiveChannelType}
+                />
               </div>
-            ) : (
-              <div className="space-y-4">
-                {dmMessages.map((msg) => (
-                  <Tooltip key={msg.id}>
-                    <TooltipTrigger
-                      render={
-                        <div className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors cursor-pointer">
-                          <Avatar className="h-9 w-9 mt-0.5">
+
+              {/* Right Column: Chat timeline side pane */}
+              <div className="w-[320px] flex flex-col h-full bg-[#1e1f22]/20 shrink-0 overflow-hidden border-l border-border">
+                <ScrollArea className="flex-1 w-full px-4 py-3">
+                  {dmMessages.length === 0 ? (
+                    <div className="h-full flex items-center justify-center text-xs text-muted-foreground p-4 text-center">
+                      No messages yet. Send a message to start chatting!
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {dmMessages.map((msg) => (
+                        <div key={msg.id} className="flex items-start space-x-2.5 hover:bg-muted/10 p-0.5 rounded transition-colors">
+                          <Avatar className="h-7 w-7 shrink-0">
                             <AvatarImage src={msg.sender?.imageUrl || undefined} />
-                            <AvatarFallback className="bg-primary/15 text-primary text-xs font-extrabold">
+                            <AvatarFallback className="bg-primary/15 text-primary text-[10px] font-bold">
                               {(msg.sender?.fullName || 'U').charAt(0).toUpperCase()}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1 overflow-hidden">
-                            <div className="flex items-baseline space-x-2">
-                              <span className="text-xs font-bold hover:underline">{msg.sender?.fullName || 'Anonymous'}</span>
-                              <span className="text-[9px] text-muted-foreground">
+                            <div className="flex items-baseline space-x-1.5">
+                              <span className="text-[10px] font-bold hover:underline truncate max-w-[110px]">
+                                {msg.sender?.fullName || 'Anonymous'}
+                              </span>
+                              <span className="text-[8px] text-muted-foreground font-medium shrink-0">
                                 {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>
-                            <p className="text-sm text-foreground/90 leading-relaxed break-words">{msg.content}</p>
+                            <p className="text-xs text-foreground/90 leading-normal break-words">{msg.content}</p>
                           </div>
                         </div>
-                      }
+                      ))}
+
+                      {/* Call waiting system message — split pane side chat */}
+                      {callerWaiting?.dmChannelId === activeDmChannelId && (
+                        <div className="flex items-center gap-2 py-1 px-1 select-none">
+                          <div className="h-[1px] flex-1 bg-emerald-500/20" />
+                          <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl px-2.5 py-1.5 shrink-0">
+                            <Phone className="h-3 w-3 text-emerald-400 animate-pulse shrink-0" />
+                            <span className="text-[10px] text-emerald-300 font-semibold">
+                              {callerWaiting.caller?.fullName} started a call
+                            </span>
+                          </div>
+                          <div className="h-[1px] flex-1 bg-emerald-500/20" />
+                        </div>
+                      )}
+
+                      <div ref={dmMessagesEndRef} />
+                    </div>
+                  )}
+                </ScrollArea>
+                
+                {/* Chat input for split view */}
+                <div className="p-3 border-t border-border shrink-0 bg-[#1e1f22]/40">
+                  <form onSubmit={handleSendDm} className="relative flex items-center bg-card border border-border rounded-lg px-3 py-1.5 focus-within:ring-1 focus-within:ring-primary focus-within:border-primary transition-all">
+                    <input
+                      type="text"
+                      value={dmInput}
+                      onChange={(e) => setDmInput(e.target.value)}
+                      placeholder={`Message @${dmRecipient?.fullName || 'friend'}`}
+                      className="flex-1 bg-transparent text-xs text-foreground placeholder-muted-foreground outline-none w-full pr-10"
                     />
-                    {msg.sender?.bio && (
-                      <TooltipContent side="right" className="max-w-[200px] break-words">
-                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5">User Bio</p>
-                        <p className="text-xs">{msg.sender.bio}</p>
-                      </TooltipContent>
-                    )}
-                  </Tooltip>
-                ))}
-                <div ref={dmMessagesEndRef} />
+                    <button
+                      type="submit"
+                      disabled={!dmInput.trim()}
+                      className="absolute right-2 bg-primary text-primary-foreground h-6 px-2.5 rounded-md text-[10px] font-bold hover:bg-primary/95 transition disabled:opacity-40 cursor-pointer"
+                    >
+                      Send
+                    </button>
+                  </form>
+                </div>
               </div>
-            )}
-          </ScrollArea>
+            </div>
+          ) : (
+            <ScrollArea className="h-full w-full px-6 py-4">
+              {dmMessages.length === 0 ? (
+                <div className="h-full flex flex-col justify-end pb-8">
+                  <Avatar className="h-16 w-16 mb-4 ring-4 ring-primary/10">
+                    <AvatarImage src={dmRecipient?.imageUrl || undefined} />
+                    <AvatarFallback className="bg-primary/15 text-primary text-2xl font-bold">
+                      {(dmRecipient?.fullName || 'U').charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <h2 className="text-2xl font-extrabold mb-1">{dmRecipient?.fullName}</h2>
+                  <p className="text-sm text-muted-foreground">
+                    This is the beginning of your direct message history with {dmRecipient?.fullName}.
+                  </p>
+
+                  {/* Call waiting system message — empty chat */}
+                  {callerWaiting?.dmChannelId === activeDmChannelId && (
+                    <CallWaitingBanner
+                      callerWaiting={callerWaiting}
+                      onJoin={() => setConnectedVoiceChannel({ id: callerWaiting.dmChannelId, name: callerWaiting.caller?.fullName || 'Call', serverId: 'dms' })}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {dmMessages.map((msg) => (
+                    <Tooltip key={msg.id}>
+                      <TooltipTrigger
+                        render={
+                          <div className="flex items-start space-x-3.5 hover:bg-muted/20 p-1 rounded-md transition-colors cursor-pointer">
+                            <Avatar className="h-9 w-9 mt-0.5">
+                              <AvatarImage src={msg.sender?.imageUrl || undefined} />
+                              <AvatarFallback className="bg-primary/15 text-primary text-xs font-extrabold">
+                                {(msg.sender?.fullName || 'U').charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="flex-1 overflow-hidden">
+                              <div className="flex items-baseline space-x-2">
+                                <span className="text-xs font-bold hover:underline">{msg.sender?.fullName || 'Anonymous'}</span>
+                                <span className="text-[9px] text-muted-foreground">
+                                  {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              </div>
+                              <p className="text-sm text-foreground/90 leading-relaxed break-words">{msg.content}</p>
+                            </div>
+                          </div>
+                        }
+                      />
+                      {msg.sender?.bio && (
+                        <TooltipContent side="right" className="max-w-[200px] break-words">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-0.5">User Bio</p>
+                          <p className="text-xs">{msg.sender.bio}</p>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  ))}
+
+                  {/* Call waiting system message — inline in message list */}
+                  {callerWaiting?.dmChannelId === activeDmChannelId && (
+                    <CallWaitingBanner
+                      callerWaiting={callerWaiting}
+                      onJoin={() => setConnectedVoiceChannel({ id: callerWaiting.dmChannelId, name: callerWaiting.caller?.fullName || 'Call', serverId: 'dms' })}
+                    />
+                  )}
+
+                  <div ref={dmMessagesEndRef} />
+                </div>
+              )}
+            </ScrollArea>
+          )
         ) : activeChannelType === CHANNEL_TYPES.VOICE ? (
           <VoiceRoomView
             voiceParticipants={voiceParticipants}
+            kickSecondsLeft={kickSecondsLeft}
             isMuted={isMuted}
             setIsMuted={setIsMuted}
             isDeafened={isDeafened}
@@ -344,7 +519,7 @@ export const ChatArea = ({
       </div>
 
       {/* Chat Form Input */}
-      {((activeServerId === DEFAULT_SERVER_ID && activeDmTab === DM_TABS.CHAT) || (activeServerId !== DEFAULT_SERVER_ID && activeChannelType === CHANNEL_TYPES.TEXT)) && (
+      {((activeServerId === DEFAULT_SERVER_ID && activeDmTab === DM_TABS.CHAT && connectedVoiceChannel?.id !== activeDmChannelId) || (activeServerId !== DEFAULT_SERVER_ID && activeChannelType === CHANNEL_TYPES.TEXT)) && (
         <div className="px-6 pb-6 pt-2 shrink-0">
           {activeServerId === DEFAULT_SERVER_ID ? (
             <form
