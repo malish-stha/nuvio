@@ -61,6 +61,7 @@ export default function HomePage() {
   const [activeChannelId, setActiveChannelId] = React.useState<string>('')
   const [activeChannelName, setActiveChannelName] = React.useState<string>('general')
   const [activeChannelType, setActiveChannelType] = React.useState<string>(CHANNEL_TYPES.TEXT)
+  const [activeServerUtility, setActiveServerUtility] = React.useState<'calendar' | 'expenses' | null>(null)
   const [messages, setMessages] = React.useState<any[]>([])
   const [chatInput, setChatInput] = React.useState('')
   const [isLoading, setIsLoading] = React.useState(true)
@@ -902,6 +903,7 @@ export default function HomePage() {
 
   const handleServerSelect = (serverId: string) => {
     setActiveServerId(serverId)
+    setActiveServerUtility(null)
     if (serverId === DEFAULT_SERVER_ID) {
       setChannels([])
       setActiveChannelId('')
@@ -1304,7 +1306,7 @@ export default function HomePage() {
 
   if (isClerkConfigured && !clerkUserId) {
     return (
-      <div className="flex h-screen w-screen bg-[#070a12] items-center justify-center">
+      <div className="flex h-full w-full bg-[#070a12] items-center justify-center">
         <SignIn
           routing="hash"
           forceRedirectUrl="/"
@@ -1320,7 +1322,7 @@ export default function HomePage() {
         <title>Nuvio - Discord Clone Dashboard</title>
       </Head>
 
-      <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground font-sans antialiased selection:bg-primary/30">
+      <div className="flex h-full w-full overflow-hidden bg-background text-foreground font-sans antialiased selection:bg-primary/30">
 
         {/* Servers Sidebar */}
         <NavigationSidebar
@@ -1379,6 +1381,8 @@ export default function HomePage() {
           activeChannelType={activeChannelType}
           voiceParticipants={voiceParticipants}
           callerWaiting={callerWaiting}
+          activeServerUtility={activeServerUtility}
+          setActiveServerUtility={setActiveServerUtility}
         />
 
         {/* Chat Area */}
@@ -1436,6 +1440,7 @@ export default function HomePage() {
           isClerkConfigured={isClerkConfigured}
           activeUserId={activeUserId || ''}
           onFriendshipChange={fetchFriendsData}
+          activeServerUtility={activeServerUtility}
         />
       </div>
 

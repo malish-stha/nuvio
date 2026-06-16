@@ -86,6 +86,7 @@ model Channel {
   serverId String
   server   Server    @relation(fields: [serverId], references: [id], onDelete: Cascade)
   messages Message[]
+  playgroundCode String? @db.Text
 }
 
 enum ChannelType {

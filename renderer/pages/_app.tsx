@@ -3,6 +3,7 @@ import { ClerkProvider } from '@clerk/clerk-react'
 import { dark } from '@clerk/themes'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { MockClerkProvider, isClerkConfigured } from '../lib/clerk-fallback'
+import { CustomTitlebar } from '../components/CustomTitlebar'
 import '../styles/global.css'
 
 const CLERK_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || ''
@@ -10,7 +11,12 @@ const CLERK_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY || '
 export default function App({ Component, pageProps }: AppProps) {
     const innerContent = (
         <TooltipProvider delay={100}>
-            <Component {...pageProps} />
+            <div className="h-screen w-screen flex flex-col overflow-hidden bg-background pt-8 relative">
+                <CustomTitlebar />
+                <div className="flex-1 overflow-hidden relative">
+                    <Component {...pageProps} />
+                </div>
+            </div>
         </TooltipProvider>
     )
 

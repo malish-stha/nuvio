@@ -3,7 +3,7 @@ import dynamic from 'next/dynamic'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
-import { Users, MessageSquare, Volume2, Edit3, Terminal, Phone, PhoneOff, Smile, Paperclip, Loader2, X, File as FileIcon, Pencil, Trash2 } from 'lucide-react'
+import { Users, MessageSquare, Volume2, Edit3, Terminal, Phone, PhoneOff, Smile, Paperclip, Loader2, X, File as FileIcon, Pencil, Trash2, Sparkles, Calendar, Landmark } from 'lucide-react'
 import { CHANNEL_TYPES, DEFAULT_SERVER_ID, DM_TABS, DmTab, FRIENDS_SUB_TABS, FriendsSubTab } from '../lib/constants'
 import { UserProfilePanel } from './UserProfilePanel'
 
@@ -110,6 +110,9 @@ import { FriendsView } from './FriendsView'
 import { VoiceRoomView } from './VoiceRoomView'
 import { WhiteboardView } from './WhiteboardView'
 import { PlaygroundView } from './PlaygroundView'
+import { CalendarView } from './CalendarView'
+import { ExpenseTrackerView } from './ExpenseTrackerView'
+import { CoPilotPanel } from './CoPilotPanel'
 
 // Discord-style "X started a call — Join the call" system row
 const CallWaitingBanner = ({
@@ -204,6 +207,7 @@ interface ChatAreaProps {
   isClerkConfigured: boolean
   activeUserId: string
   onFriendshipChange?: () => void
+  activeServerUtility: 'calendar' | 'expenses' | null
 }
 
 export const ChatArea = ({
@@ -258,8 +262,10 @@ export const ChatArea = ({
   getToken,
   isClerkConfigured,
   activeUserId,
-  onFriendshipChange
+  onFriendshipChange,
+  activeServerUtility
 }: ChatAreaProps) => {
+  const [isCoPilotOpen, setIsCoPilotOpen] = React.useState(false)
   const [profilePanelOpen, setProfilePanelOpen] = React.useState(false)
   const [emojiPickerOpen, setEmojiPickerOpen] = React.useState(false)
   const [gifPickerOpen, setGifPickerOpen] = React.useState(false)
@@ -560,7 +566,8 @@ export const ChatArea = ({
 
   return (
     <>
-      <main className="flex-1 flex flex-col bg-background">
+      <main className="flex-1 flex bg-background relative overflow-hidden">
+        <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden relative">
         <header className="h-12 border-b border-border flex items-center px-6 font-semibold shadow-sm justify-between shrink-0">
           <div className="flex items-center space-x-2 select-none">
             {activeServerId === DEFAULT_SERVER_ID ? (
@@ -630,6 +637,15 @@ export const ChatArea = ({
                   )}
                 </>
               )
+            ) : activeServerUtility ? (
+              <>
+                {activeServerUtility === 'calendar' ? (
+                  <Calendar className="h-5 w-5 text-primary mr-2 shrink-0" />
+                ) : (
+                  <Landmark className="h-5 w-5 text-primary mr-2 shrink-0" />
+                )}
+                <span>{activeServerUtility === 'calendar' ? 'Events Calendar' : 'Expense Tracker'}</span>
+              </>
             ) : (
               <>
                 {activeChannelType === CHANNEL_TYPES.VOICE ? (
@@ -665,6 +681,22 @@ export const ChatArea = ({
                   <span>Call</span>
                 </button>
               )}
+            </div>
+          )}
+
+          {activeServerId !== DEFAULT_SERVER_ID && activeChannelType === CHANNEL_TYPES.TEXT && (
+            <div className="flex items-center space-x-2 select-none">
+              <button
+                onClick={() => setIsCoPilotOpen(!isCoPilotOpen)}
+                className={`p-1.5 rounded-lg transition active:scale-95 cursor-pointer ${
+                  isCoPilotOpen 
+                    ? 'bg-primary/20 text-primary' 
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted/40'
+                }`}
+                title="Toggle AI Co-Pilot"
+              >
+                <Sparkles className="h-4.5 w-4.5" />
+              </button>
             </div>
           )}
         </header>
@@ -982,6 +1014,18 @@ export const ChatArea = ({
                 )}
               </ScrollArea>
             )
+          ) : activeServerUtility === 'calendar' ? (
+            <CalendarView
+              serverId={activeServerId}
+              activeUserId={activeUserId}
+              getToken={getToken}
+            />
+          ) : activeServerUtility === 'expenses' ? (
+            <ExpenseTrackerView
+              serverId={activeServerId}
+              activeUserId={activeUserId}
+              getToken={getToken}
+            />
           ) : activeChannelType === CHANNEL_TYPES.VOICE ? (
             <VoiceRoomView
               voiceParticipants={voiceParticipants}
@@ -1002,7 +1046,11 @@ export const ChatArea = ({
           ) : activeChannelType === CHANNEL_TYPES.WHITEBOARD ? (
             <WhiteboardView />
           ) : activeChannelType === CHANNEL_TYPES.PLAYGROUND ? (
-            <PlaygroundView />
+            <PlaygroundView
+              channelId={activeChannelId}
+              activeUserId={activeUserId}
+              getToken={getToken}
+            />
           ) : (
             <ScrollArea className="h-full w-full px-6 py-4">
               {isLoading ? (
@@ -1288,6 +1336,18 @@ export const ChatArea = ({
               </form>
             )}
           </div>
+        )}
+        </div>
+
+        {/* AI Co-Pilot Panel */}
+        {activeChannelType === CHANNEL_TYPES.TEXT && activeServerId !== DEFAULT_SERVER_ID && (
+          <CoPilotPanel
+            channelId={activeChannelId}
+            isOpen={isCoPilotOpen}
+            onClose={() => setIsCoPilotOpen(false)}
+            getToken={getToken}
+            onUseDraft={(draftText) => setChatInput(draftText)}
+          />
         )}
       </main>
 

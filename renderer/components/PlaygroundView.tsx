@@ -1,23 +1,141 @@
 import React from 'react'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import { pusherClient } from '../lib/pusher-client'
+import { isClerkConfigured } from '../lib/clerk-fallback'
+import { PlaygroundHeader } from './PlaygroundHeader'
+import { CodeEditor } from './CodeEditor'
+import { ConsoleLogs } from './ConsoleLogs'
 
-export const PlaygroundView = () => {
-  const [code, setCode] = React.useState(`// Nuvio Collaborative Code Playground
-// Write your JavaScript/HTML code here and click Run!
-
-function calculateSplit(total, people) {
-  const split = total / people;
-  console.log("Each person owes: $" + split.toFixed(2));
-  return split;
+interface PlaygroundViewProps {
+  channelId: string
+  activeUserId: string | null | undefined
+  getToken: () => Promise<string | null>
 }
 
-calculateSplit(150.50, 4);`)
+export const PlaygroundView = ({
+  channelId,
+  activeUserId,
+  getToken
+}: PlaygroundViewProps) => {
+  const [code, setCode] = React.useState('// Loading code...')
   const [consoleLogs, setConsoleLogs] = React.useState<string[]>([
     'Nuvio Compiler loaded successfully.',
     'Ready to run code snippets.'
   ])
   const [isRunning, setIsRunning] = React.useState(false)
   const [language, setLanguage] = React.useState('javascript')
+  const [syncState, setSyncState] = React.useState<'synced' | 'typing' | 'loading'>('loading')
+  const [collaboratorTyping, setCollaboratorTyping] = React.useState(false)
+
+  const isRemoteUpdateRef = React.useRef(false)
+  const syncTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+  const saveTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+  const collaboratorTypingTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+
+  // Fetch initial code state
+  React.useEffect(() => {
+    const fetchCode = async () => {
+      setSyncState('loading')
+      try {
+        const token = isClerkConfigured ? await getToken() : 'mock-token'
+        const res = await fetch(`/api/playground/get?channelId=${channelId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        })
+        if (res.ok) {
+          const data = await res.json()
+          isRemoteUpdateRef.current = true
+          setCode(data.code || `// Welcome to Nuvio Collaborative Code Playground\n// Write your JavaScript/HTML code here and click Run!`)
+          setSyncState('synced')
+        }
+      } catch (err) {
+        console.error('Failed to fetch initial code:', err)
+        setSyncState('synced')
+      }
+    }
+
+    fetchCode()
+  }, [channelId])
+
+  // Pusher real-time subscription
+  React.useEffect(() => {
+    if (!pusherClient || !channelId) return
+
+    const pusherChannel = pusherClient.subscribe(`channel-${channelId}`)
+
+    pusherChannel.bind('playground-update', (data: { code: string; senderId: string }) => {
+      if (data.senderId !== activeUserId) {
+        // Block outgoing sync loop
+        isRemoteUpdateRef.current = true
+        setCode(data.code)
+        
+        // Show collaborator typing visual feedback
+        setCollaboratorTyping(true)
+        if (collaboratorTypingTimeoutRef.current) {
+          clearTimeout(collaboratorTypingTimeoutRef.current)
+        }
+        collaboratorTypingTimeoutRef.current = setTimeout(() => {
+          setCollaboratorTyping(false)
+        }, 1500)
+      }
+    })
+
+    return () => {
+      pusherChannel.unbind('playground-update')
+      pusherClient.unsubscribe(`channel-${channelId}`)
+    }
+  }, [channelId, activeUserId])
+
+  // Broadcast typing changes (debounced sync) and save to database (longer debounce)
+  const handleCodeChange = (newCode: string) => {
+    setCode(newCode)
+
+    if (isRemoteUpdateRef.current) {
+      isRemoteUpdateRef.current = false
+      return
+    }
+
+    setSyncState('typing')
+
+    // 1. Debounced broadcast sync (400ms) for other active clients
+    if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current)
+    syncTimeoutRef.current = setTimeout(async () => {
+      try {
+        const token = isClerkConfigured ? await getToken() : 'mock-token'
+        await fetch('/api/playground/sync', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ channelId, code: newCode })
+        })
+      } catch (err) {
+        console.error('Pusher broadcast sync failed:', err)
+      }
+    }, 400)
+
+    // 2. Debounced db save (2000ms) for data persistence
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current)
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const token = isClerkConfigured ? await getToken() : 'mock-token'
+        const res = await fetch('/api/playground/save', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ channelId, code: newCode })
+        })
+        if (res.ok) {
+          setSyncState('synced')
+        }
+      } catch (err) {
+        console.error('DB save failed:', err)
+      }
+    }, 2000)
+  }
 
   const runCode = () => {
     setIsRunning(true)
@@ -36,6 +154,7 @@ calculateSplit(150.50, 4);`)
             }
           }
 
+          // Safe sandboxed eval
           const runBlock = new Function('console', code)
           runBlock(customConsole)
 
@@ -61,25 +180,13 @@ calculateSplit(150.50, 4);`)
 
   const loadTemplate = (lang: string) => {
     setLanguage(lang)
+    let template = ''
     if (lang === 'javascript') {
-      setCode(`// Nuvio Collaborative Code Playground
-// Write your JavaScript/HTML code here and click Run!
-
-function calculateSplit(total, people) {
-  const split = total / people;
-  console.log("Each person owes: $" + split.toFixed(2));
-  return split;
-}
-
-calculateSplit(150.50, 4);`)
+      template = `// Welcome to Nuvio Collaborative Code Playground\n// Write your JavaScript/HTML code here and click Run!\n\nfunction greet(name) {\n  console.log("Hello, " + name + "!");\n}\n\ngreet("Nuvio Developer");`
     } else {
-      setCode(`<!-- Nuvio UI Component Preview -->
-<div class="card p-5 bg-slate-800 rounded-xl border border-slate-700 text-white shadow-xl">
-  <h2 class="text-xl font-bold mb-2">Welcome to Nuvio Dashboard</h2>
-  <p class="text-sm text-slate-400">Collaboration built directly for developers.</p>
-  <button class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg mt-4 text-xs font-bold transition">Click me</button>
-</div>`)
+      template = `<!-- Nuvio UI Component Preview -->\n<div class="card p-5 bg-slate-800 rounded-xl border border-slate-700 text-white shadow-xl">\n  <h2 class="text-xl font-bold mb-2">Welcome to Nuvio Dashboard</h2>\n  <p class="text-sm text-slate-400">Collaboration built directly for developers.</p>\n  <button class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg mt-4 text-xs font-bold transition">Click me</button>\n</div>`
     }
+    handleCodeChange(template)
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -89,7 +196,7 @@ calculateSplit(150.50, 4);`)
       const start = textarea.selectionStart
       const end = textarea.selectionEnd
       const newValue = code.substring(0, start) + '  ' + code.substring(end)
-      setCode(newValue)
+      handleCodeChange(newValue)
       
       setTimeout(() => {
         textarea.selectionStart = textarea.selectionEnd = start + 2
@@ -99,72 +206,23 @@ calculateSplit(150.50, 4);`)
 
   return (
     <div className="h-full flex flex-col bg-muted/10 select-none overflow-hidden">
-      <div className="h-12 border-b border-border bg-card/60 backdrop-blur-sm px-6 flex items-center justify-between shrink-0 z-10">
-        <div className="flex items-center gap-4">
-          <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Language</span>
-          <select
-            value={language}
-            onChange={(e) => loadTemplate(e.target.value)}
-            className="bg-card border border-border text-foreground text-xs font-bold px-3 py-1.5 rounded-lg outline-none cursor-pointer"
-          >
-            <option value="javascript">JavaScript (ES6)</option>
-            <option value="html">HTML / CSS component</option>
-          </select>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setConsoleLogs(['Terminal console logs cleared.'])}
-            className="bg-muted hover:bg-muted/80 text-muted-foreground px-3.5 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer"
-          >
-            Clear Logs
-          </button>
-          <button
-            onClick={runCode}
-            disabled={isRunning}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 px-4 py-1.5 rounded-lg text-xs font-bold transition disabled:opacity-40 flex items-center gap-1.5 cursor-pointer"
-          >
-            {isRunning ? 'Running...' : 'Run Code'}
-          </button>
-        </div>
-      </div>
+      <PlaygroundHeader
+        language={language}
+        onLanguageChange={loadTemplate}
+        onClearLogs={() => setConsoleLogs(['Terminal console logs cleared.'])}
+        onRunCode={runCode}
+        isRunning={isRunning}
+        syncState={syncState}
+        collaboratorTyping={collaboratorTyping}
+      />
 
       <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 border-r border-border flex flex-col h-full bg-[#1e1e2e]">
-          <textarea
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1 bg-transparent text-slate-100 font-mono text-xs p-6 outline-none resize-none leading-relaxed overflow-y-auto"
-            style={{ tabSize: 2 }}
-          />
-        </div>
-
-        <div className="w-96 flex flex-col bg-[#11111b] h-full">
-          <div className="h-9 border-b border-[#181825] px-4 flex items-center">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Console Logs</span>
-          </div>
-          <ScrollArea className="flex-1 p-4">
-            <div className="font-mono text-xs text-slate-300 space-y-2 select-text">
-              {consoleLogs.map((log, idx) => (
-                <div
-                  key={idx}
-                  className={`leading-relaxed break-all ${
-                    log.startsWith('[ERROR]')
-                      ? 'text-rose-400'
-                      : log.startsWith('[LOG]')
-                      ? 'text-emerald-400'
-                      : log.startsWith('>')
-                      ? 'text-sky-400 font-bold'
-                      : 'text-slate-400'
-                  }`}
-                >
-                  {log}
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
-        </div>
+        <CodeEditor
+          code={code}
+          onCodeChange={handleCodeChange}
+          onKeyDown={handleKeyDown}
+        />
+        <ConsoleLogs logs={consoleLogs} />
       </div>
     </div>
   )

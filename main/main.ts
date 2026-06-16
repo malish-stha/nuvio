@@ -15,11 +15,34 @@ if (isProd) {
   await app.whenReady()
 
   const mainWindow = createWindow('main', {
-    width: 1000,
-    height: 600,
+    width: 1200,
+    height: 800,
+    frame: false,
+    titleBarStyle: 'hidden',
     webPreferences: {
       preload: path.join(import.meta.dirname, 'preload.js'),
     },
+  })
+
+  // Window IPC controls
+  ipcMain.on('window-minimize', () => {
+    mainWindow.minimize()
+  })
+
+  ipcMain.on('window-maximize', () => {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow.maximize()
+    }
+  })
+
+  ipcMain.on('window-close', () => {
+    mainWindow.close()
+  })
+
+  ipcMain.handle('window-is-maximized', async () => {
+    return mainWindow.isMaximized()
   })
 
   if (isProd) {

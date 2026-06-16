@@ -21,7 +21,9 @@ import {
   PhoneOff,
   Phone,
   Monitor,
-  LogOut
+  LogOut,
+  Calendar,
+  Landmark
 } from 'lucide-react'
 
 interface ChannelSidebarProps {
@@ -76,6 +78,8 @@ interface ChannelSidebarProps {
   activeChannelType: string
   voiceParticipants: any[]
   callerWaiting?: { caller: any; dmChannelId: string } | null
+  activeServerUtility: 'calendar' | 'expenses' | null
+  setActiveServerUtility: (utility: 'calendar' | 'expenses' | null) => void
 }
 
 export const ChannelSidebar = ({
@@ -126,6 +130,8 @@ export const ChannelSidebar = ({
   activeChannelType,
   voiceParticipants,
   callerWaiting,
+  activeServerUtility,
+  setActiveServerUtility,
 }: ChannelSidebarProps) => {
   return (
     <aside className="w-60 bg-card/60 flex flex-col border-r border-border shrink-0">
@@ -325,6 +331,45 @@ export const ChannelSidebar = ({
           </div>
         ) : (
           <div className="space-y-4">
+            {/* Server Utilities */}
+            <div className="px-1.5 space-y-1">
+              <div
+                onClick={() => {
+                  setActiveChannelId('')
+                  setActiveChannelName('')
+                  setActiveChannelType('')
+                  setActiveServerUtility('calendar')
+                }}
+                className={`px-3 py-2 rounded-xl cursor-pointer flex items-center transition select-none ${
+                  activeServerUtility === 'calendar'
+                    ? 'bg-primary/10 text-primary font-bold shadow-sm'
+                    : 'hover:bg-muted/30 text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Calendar className="h-4 w-4 mr-2.5 text-primary shrink-0" />
+                <span className="text-xs font-semibold">Events Calendar</span>
+              </div>
+
+              <div
+                onClick={() => {
+                  setActiveChannelId('')
+                  setActiveChannelName('')
+                  setActiveChannelType('')
+                  setActiveServerUtility('expenses')
+                }}
+                className={`px-3 py-2 rounded-xl cursor-pointer flex items-center transition select-none ${
+                  activeServerUtility === 'expenses'
+                    ? 'bg-primary/10 text-primary font-bold shadow-sm'
+                    : 'hover:bg-muted/30 text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                <Landmark className="h-4 w-4 mr-2.5 text-primary shrink-0" />
+                <span className="text-xs font-semibold">Expense Tracker</span>
+              </div>
+            </div>
+
+            <div className="h-[1px] bg-border/40 mx-2" />
+
             {/* Text Channels */}
             <div>
               <div className="px-3 py-1 text-[10px] font-bold text-muted-foreground uppercase tracking-widest select-none flex items-center justify-between">
@@ -353,6 +398,7 @@ export const ChannelSidebar = ({
                         setActiveChannelId(ch.id)
                         setActiveChannelName(ch.name)
                         setActiveChannelType(CHANNEL_TYPES.TEXT)
+                        setActiveServerUtility(null)
                       }}
                       className={`group px-3 py-2 rounded-md font-medium text-sm cursor-pointer flex items-center justify-between transition ${
                         activeChannelId === ch.id
@@ -406,6 +452,7 @@ export const ChannelSidebar = ({
                     <div
                       key={ch.id}
                       onClick={() => {
+                        setActiveServerUtility(null)
                         if (connectedVoiceChannel?.id === ch.id) {
                           setActiveChannelId(ch.id)
                           setActiveChannelName(ch.name)
@@ -473,6 +520,7 @@ export const ChannelSidebar = ({
                         setActiveChannelId(ch.id)
                         setActiveChannelName(ch.name)
                         setActiveChannelType(ch.type || CHANNEL_TYPES.TEXT)
+                        setActiveServerUtility(null)
                       }}
                       className={`group px-3 py-2 rounded-md font-medium text-sm cursor-pointer flex items-center justify-between transition ${
                         activeChannelId === ch.id
