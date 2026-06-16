@@ -4,6 +4,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { Users, MessageSquare, Volume2, Edit3, Terminal, Phone, PhoneOff } from 'lucide-react'
 import { CHANNEL_TYPES, DEFAULT_SERVER_ID, DM_TABS, DmTab, FRIENDS_SUB_TABS, FriendsSubTab } from '../lib/constants'
+import { UserProfilePanel } from './UserProfilePanel'
 
 // Sub views
 import { FriendsView } from './FriendsView'
@@ -97,6 +98,11 @@ interface ChatAreaProps {
   kickSecondsLeft: number | null
   // Caller waiting in lobby (shown as system message in DM chat)
   callerWaiting?: { caller: any; dmChannelId: string } | null
+  // Auth for profile panel
+  getToken: () => Promise<string | null>
+  isClerkConfigured: boolean
+  activeUserId: string
+  onFriendshipChange?: () => void
 }
 
 export const ChatArea = ({
@@ -145,10 +151,19 @@ export const ChatArea = ({
   messagesEndRef,
   dmMessagesEndRef,
   kickSecondsLeft,
-  callerWaiting
+  callerWaiting,
+  getToken,
+  isClerkConfigured,
+  activeUserId,
+  onFriendshipChange
 }: ChatAreaProps) => {
+  const [profilePanelOpen, setProfilePanelOpen] = React.useState(false)
+
+  // Close panel when switching DM channels
+  React.useEffect(() => { setProfilePanelOpen(false) }, [activeDmChannelId])
   return (
-    <main className="flex-1 flex flex-col bg-background">
+    <>
+      <main className="flex-1 flex flex-col bg-background">
       <header className="h-12 border-b border-border flex items-center px-6 font-semibold shadow-sm justify-between shrink-0">
         <div className="flex items-center space-x-2 select-none">
           {activeServerId === DEFAULT_SERVER_ID ? (
@@ -200,8 +215,20 @@ export const ChatArea = ({
               </div>
             ) : (
               <>
-                <span className="text-muted-foreground font-semibold text-lg">@</span>
-                <span>{dmRecipient ? dmRecipient.fullName : 'Direct Messages'}</span>
+                <button
+                  onClick={() => setProfilePanelOpen(true)}
+                  className="flex items-center gap-2 hover:opacity-80 transition cursor-pointer group"
+                  title="View profile"
+                >
+                  <Avatar className="h-6 w-6 ring-2 ring-primary/20 group-hover:ring-primary/50 transition">
+                    <AvatarImage src={dmRecipient?.imageUrl || undefined} />
+                    <AvatarFallback className="bg-primary/15 text-primary text-[10px] font-extrabold">
+                      {(dmRecipient?.fullName || 'U').charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-muted-foreground font-semibold text-lg leading-none">@</span>
+                  <span className="font-bold group-hover:underline">{dmRecipient ? dmRecipient.fullName : 'Direct Messages'}</span>
+                </button>
                 {dmRecipient?.bio && (
                   <span className="text-xs text-muted-foreground font-normal ml-2 truncate max-w-[240px]">
                     — {dmRecipient.bio}
@@ -566,5 +593,26 @@ export const ChatArea = ({
         </div>
       )}
     </main>
+
+    {/* User Profile Panel — slides in from the right when clicking the DM recipient name */}
+    {profilePanelOpen && dmRecipient && (
+      <UserProfilePanel
+        targetUser={dmRecipient}
+        getToken={getToken}
+        isClerkConfigured={isClerkConfigured}
+        activeUserId={activeUserId}
+        onClose={() => setProfilePanelOpen(false)}
+        onStartCall={
+          connectedVoiceChannel?.id !== activeDmChannelId
+            ? () => {
+                setConnectedVoiceChannel({ id: activeDmChannelId, name: dmRecipient.fullName || 'Call', serverId: 'dms' })
+                setProfilePanelOpen(false)
+              }
+            : undefined
+        }
+        onFriendshipChange={onFriendshipChange}
+      />
+    )}
+    </>
   )
 }

@@ -1372,6 +1372,10 @@ export default function HomePage() {
           messagesEndRef={messagesEndRef}
           dmMessagesEndRef={dmMessagesEndRef}
           callerWaiting={callerWaiting}
+          getToken={getToken}
+          isClerkConfigured={isClerkConfigured}
+          activeUserId={activeUserId || ''}
+          onFriendshipChange={fetchFriendsData}
         />
       </div>
 
