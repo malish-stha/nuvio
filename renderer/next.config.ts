@@ -1,10 +1,10 @@
 import { NextConfig } from 'next'
 
-const isVercel = process.env.VERCEL === '1' || !!process.env.VERCEL
+const isNextronBuild = process.env.NEXTRON_BUILD === 'true'
 
 const config: NextConfig = {
-  output: (process.env.NODE_ENV === 'production' && !isVercel) ? 'export' : undefined,
-  distDir: (process.env.NODE_ENV === 'production' && !isVercel) ? '../app' : '.next',
+  output: isNextronBuild ? 'export' : undefined,
+  distDir: isNextronBuild ? '../app' : '.next',
   trailingSlash: true,
   images: {
     unoptimized: true,
