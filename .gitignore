@@ -12,4 +12,4 @@ next-env.d.ts
 # env
 
 .env*
-/app/generated/prisma
+/renderer/generated/prisma
