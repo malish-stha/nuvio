@@ -13,3 +13,5 @@ next-env.d.ts
 
 .env*
 /renderer/generated/prisma
+.DS_Store
+**/.DS_Store

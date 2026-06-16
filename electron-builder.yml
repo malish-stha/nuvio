@@ -1,5 +1,5 @@
-appId: com.example.nextron
-productName: My Nextron App
+appId: com.nuvio.app
+productName: Nuvio
 copyright: Copyright © 2026 Yoshihide Shiono
 directories:
   output: dist
