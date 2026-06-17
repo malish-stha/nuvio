@@ -3,6 +3,7 @@ import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
 import { getCached, setCached, invalidateCache } from '../../../lib/redis-cache'
+import { checkRateLimit } from '../../../lib/rate-limiter'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -30,6 +31,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(401).json({ error: 'Unauthorized' })
     }
     const userId = auth.sub
+
+    if (['POST', 'DELETE'].includes(req.method || '')) {
+        const isAllowed = await checkRateLimit(res, `events:${userId}`, 10, 60)
+        if (!isAllowed) return
+    }
 
     if (req.method === 'GET') {
         const { serverId } = req.query as { serverId: string }

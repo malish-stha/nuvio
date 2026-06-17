@@ -3,6 +3,7 @@ import { verifyToken } from '@clerk/backend'
 import { db } from '../../lib/db'
 import { pusherServer } from '../../lib/pusher-server'
 import { getCached, setCached, invalidateCache } from '../../lib/redis-cache'
+import { checkRateLimit } from '../../lib/rate-limiter'
 
 // Helper to authenticate request using Authorization header token
 async function authenticate(req: NextApiRequest) {
@@ -32,6 +33,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (!auth) {
             return res.status(401).json({ error: 'Unauthorized' })
         }
+
+        const currentUserId = (auth as any).sub
+        const isAllowed = await checkRateLimit(res, `messages:${currentUserId}`, 20, 60)
+        if (!isAllowed) return
 
         const { content, fileUrl, channelId } = req.body
 
@@ -182,6 +187,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(401).json({ error: 'Unauthorized' })
         }
 
+        const currentUserId = (auth as any).sub
+        const isAllowed = await checkRateLimit(res, `messages:${currentUserId}`, 20, 60)
+        if (!isAllowed) return
+
         const { messageId, content } = req.body
 
         if (!messageId) {
@@ -237,6 +246,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (!auth) {
             return res.status(401).json({ error: 'Unauthorized' })
         }
+
+        const currentUserId = (auth as any).sub
+        const isAllowed = await checkRateLimit(res, `messages:${currentUserId}`, 20, 60)
+        if (!isAllowed) return
 
         const messageId = req.query.messageId as string || req.body.messageId
 

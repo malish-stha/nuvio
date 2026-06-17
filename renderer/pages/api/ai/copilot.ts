@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
+import { checkRateLimit } from '../../../lib/rate-limiter'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -31,6 +32,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!auth) {
         return res.status(401).json({ error: 'Unauthorized' })
     }
+
+    const currentUserId = auth.sub
+    const isAllowed = await checkRateLimit(res, `copilot:${currentUserId}`, 5, 60)
+    if (!isAllowed) return
 
     const { channelId, action } = req.body
 

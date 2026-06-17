@@ -3,6 +3,7 @@ import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
 import { getCached, setCached, invalidateCache } from '../../../lib/redis-cache'
+import { checkRateLimit } from '../../../lib/rate-limiter'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -31,6 +32,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const currentUserId = (auth as any).sub
+
+    if (['POST', 'PATCH', 'DELETE'].includes(req.method || '')) {
+        const isAllowed = await checkRateLimit(res, `dms:${currentUserId}`, 20, 60)
+        if (!isAllowed) return
+    }
 
     if (req.method === 'POST') {
         const { content, fileUrl, dmChannelId } = req.body
