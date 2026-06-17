@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
+import { invalidateWorkspaceForServer } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -69,10 +70,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 }
             })
 
+            await invalidateWorkspaceForServer(serverId)
+
             return res.status(200).json(updatedServer)
         }
 
         if (req.method === 'DELETE') {
+            await invalidateWorkspaceForServer(serverId)
+
             await db.server.delete({
                 where: { id: serverId }
             })

@@ -209,7 +209,7 @@ export default function HomePage() {
   const handleDeleteCustomSound = async (id: string) => {
     try {
       await deleteCustomSound(id)
-      
+
       // If the deleted sound was selected, reset it to default
       if (messageSoundId === id) {
         handleMessageSoundChange('default')
@@ -217,7 +217,7 @@ export default function HomePage() {
       if (incomingRingId === id) {
         handleIncomingRingChange('default')
       }
-      
+
       const sounds = await getCustomSounds()
       setCustomSounds(sounds)
     } catch (e) {
@@ -442,7 +442,7 @@ export default function HomePage() {
           try {
             const raw = localStorage.getItem('nuvio_nav_state')
             if (raw) savedNav = JSON.parse(raw)
-          } catch (e) {}
+          } catch (e) { }
 
           let restored = false
 
@@ -1319,7 +1319,7 @@ export default function HomePage() {
   } return (
     <React.Fragment>
       <Head>
-        <title>Nuvio - Discord Clone Dashboard</title>
+        <title>Nuvio</title>
       </Head>
 
       <div className="flex h-full w-full overflow-hidden bg-background text-foreground font-sans antialiased selection:bg-primary/30">

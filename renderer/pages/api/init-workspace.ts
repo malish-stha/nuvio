@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken, createClerkClient } from '@clerk/backend'
 import { db } from '../../lib/db'
+import { getCached, setCached } from '../../lib/redis-cache'
 
 const clerk = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
 
@@ -40,6 +41,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const userId = (auth as any).sub
 
     try {
+        const cacheKey = `workspace:${userId}`
+        const cachedWorkspace = await getCached<{ user: any; servers: any[] }>(cacheKey)
+        if (cachedWorkspace) {
+            return res.status(200).json(cachedWorkspace)
+        }
+
         // Ensure user exists in our database
         let dbUser = await db.user.findUnique({
             where: { id: userId }
@@ -122,10 +129,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             servers = [defaultServer]
         }
 
-        return res.status(200).json({
+        const payload = {
             user: dbUser,
             servers,
-        })
+        }
+        await setCached(cacheKey, payload, 86400) // Cache for 24 hours
+        return res.status(200).json(payload)
     } catch (error: any) {
         console.error('API Init Workspace error:', error)
         return res.status(500).json({ error: error.message || 'Internal Server Error' })

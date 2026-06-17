@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
+import { getCached, setCached, invalidateCache } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -37,125 +38,142 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         try {
-            // 1. Fetch personal daily ledger items for current user (where serverId matches context or empty, isPersonal is true)
-            const personalExpenses = await db.expense.findMany({
-                where: {
-                    payerId: currentUserId,
-                    isPersonal: true
-                },
-                orderBy: { createdAt: 'desc' }
-            })
+            const personalCacheKey = `expenses:personal:${currentUserId}`
+            const sharedCacheKey = `expenses:shared:${serverId}`
 
-            // 2. Fetch shared group expenses for this server
-            const sharedExpenses = await db.expense.findMany({
-                where: {
-                    serverId,
-                    isPersonal: false
-                },
-                include: {
-                    payer: {
-                        select: { id: true, fullName: true, imageUrl: true }
+            // 1. Fetch personal daily ledger items for current user (cached)
+            let personalExpenses = await getCached<any[]>(personalCacheKey)
+            if (!personalExpenses) {
+                personalExpenses = await db.expense.findMany({
+                    where: {
+                        payerId: currentUserId,
+                        isPersonal: true
                     },
-                    splits: {
-                        include: {
-                            user: {
-                                select: { id: true, fullName: true, imageUrl: true }
+                    orderBy: { createdAt: 'desc' }
+                })
+                await setCached(personalCacheKey, personalExpenses, 3600)
+            }
+
+            // 2. Fetch shared data (cached)
+            let sharedData = await getCached<{
+                shared: any[]
+                debts: any[]
+                members: any[]
+            }>(sharedCacheKey)
+
+            if (!sharedData) {
+                // Fetch shared group expenses for this server
+                const sharedExpenses = await db.expense.findMany({
+                    where: {
+                        serverId,
+                        isPersonal: false
+                    },
+                    include: {
+                        payer: {
+                            select: { id: true, fullName: true, imageUrl: true }
+                        },
+                        splits: {
+                            include: {
+                                user: {
+                                    select: { id: true, fullName: true, imageUrl: true }
+                                }
                             }
                         }
-                    }
-                },
-                orderBy: { createdAt: 'desc' }
-            })
+                    },
+                    orderBy: { createdAt: 'desc' }
+                })
 
-            // 3. Fetch server members list to calculate balances
-            const members = await db.member.findMany({
-                where: { serverId },
-                include: {
-                    user: {
-                        select: { id: true, fullName: true, imageUrl: true }
-                    }
-                }
-            })
-
-            // 4. Calculate Net Balances (Paid - Owed)
-            // Initialize balanceMap with 0 for all server members
-            const balanceMap: Record<string, number> = {}
-            const usersMap: Record<string, { fullName: string; imageUrl: string | null }> = {}
-            
-            members.forEach(m => {
-                balanceMap[m.userId] = 0
-                usersMap[m.userId] = {
-                    fullName: m.user.fullName,
-                    imageUrl: m.user.imageUrl
-                }
-            })
-
-            // Calculate paid amount and owed amount for each shared expense
-            sharedExpenses.forEach(exp => {
-                const amount = Number(exp.amount)
-                const payerId = exp.payerId
-                
-                // Add to payer
-                if (balanceMap[payerId] !== undefined) {
-                    balanceMap[payerId] += amount
-                }
-
-                // Subtract from owe-ees
-                exp.splits.forEach(split => {
-                    const oweUserId = split.userId
-                    const splitAmt = Number(split.amount)
-                    if (balanceMap[oweUserId] !== undefined) {
-                        balanceMap[oweUserId] -= splitAmt
+                // Fetch server members list to calculate balances
+                const members = await db.member.findMany({
+                    where: { serverId },
+                    include: {
+                        user: {
+                            select: { id: true, fullName: true, imageUrl: true }
+                        }
                     }
                 })
-            })
 
-            // Simplify debts: matching positive balances (creditors) with negative balances (debtors)
-            const debtors: { userId: string; amount: number }[] = []
-            const creditors: { userId: string; amount: number }[] = []
+                // Calculate Net Balances (Paid - Owed)
+                const balanceMap: Record<string, number> = {}
+                const usersMap: Record<string, { fullName: string; imageUrl: string | null }> = {}
+                
+                members.forEach(m => {
+                    balanceMap[m.userId] = 0
+                    usersMap[m.userId] = {
+                        fullName: m.user.fullName,
+                        imageUrl: m.user.imageUrl
+                    }
+                })
 
-            Object.entries(balanceMap).forEach(([uid, bal]) => {
-                // Round to 2 decimal places to avoid floating point issues
-                const rounded = Math.round(bal * 100) / 100
-                if (rounded < 0) {
-                    debtors.push({ userId: uid, amount: -rounded })
-                } else if (rounded > 0) {
-                    creditors.push({ userId: uid, amount: rounded })
-                }
-            })
+                sharedExpenses.forEach(exp => {
+                    const amount = Number(exp.amount)
+                    const payerId = exp.payerId
+                    
+                    if (balanceMap[payerId] !== undefined) {
+                        balanceMap[payerId] += amount
+                    }
 
-            // Greedy settlement calculation
-            const debtsList: { from: string; fromName: string; to: string; toName: string; amount: number }[] = []
-            let dIdx = 0
-            let cIdx = 0
-
-            while (dIdx < debtors.length && cIdx < creditors.length) {
-                const debtor = debtors[dIdx]
-                const creditor = creditors[cIdx]
-                const settleAmount = Math.min(debtor.amount, creditor.amount)
-
-                if (settleAmount > 0.01) {
-                    debtsList.push({
-                        from: debtor.userId,
-                        fromName: usersMap[debtor.userId]?.fullName || 'Member',
-                        to: creditor.userId,
-                        toName: usersMap[creditor.userId]?.fullName || 'Member',
-                        amount: Number(settleAmount.toFixed(2))
+                    exp.splits.forEach(split => {
+                        const oweUserId = split.userId
+                        const splitAmt = Number(split.amount)
+                        if (balanceMap[oweUserId] !== undefined) {
+                            balanceMap[oweUserId] -= splitAmt
+                        }
                     })
+                })
+
+                const debtors: { userId: string; amount: number }[] = []
+                const creditors: { userId: string; amount: number }[] = []
+
+                Object.entries(balanceMap).forEach(([uid, bal]) => {
+                    const rounded = Math.round(bal * 100) / 100
+                    if (rounded < 0) {
+                        debtors.push({ userId: uid, amount: -rounded })
+                    } else if (rounded > 0) {
+                        creditors.push({ userId: uid, amount: rounded })
+                    }
+                })
+
+                const debtsList: { from: string; fromName: string; to: string; toName: string; amount: number }[] = []
+                let dIdx = 0
+                let cIdx = 0
+
+                while (dIdx < debtors.length && cIdx < creditors.length) {
+                    const debtor = debtors[dIdx]
+                    const creditor = creditors[cIdx]
+                    const settleAmount = Math.min(debtor.amount, creditor.amount)
+
+                    if (settleAmount > 0.01) {
+                        debtsList.push({
+                            from: debtor.userId,
+                            fromName: usersMap[debtor.userId]?.fullName || 'Member',
+                            to: creditor.userId,
+                            toName: usersMap[creditor.userId]?.fullName || 'Member',
+                            amount: Number(settleAmount.toFixed(2))
+                        })
+                    }
+
+                    debtor.amount -= settleAmount
+                    creditor.amount -= settleAmount
+
+                    if (debtor.amount < 0.01) dIdx++
+                    if (creditor.amount < 0.01) cIdx++
                 }
 
-                debtor.amount -= settleAmount
-                creditor.amount -= settleAmount
+                sharedData = {
+                    shared: sharedExpenses,
+                    debts: debtsList,
+                    members: members.map(m => m.user)
+                }
 
-                if (debtor.amount < 0.01) dIdx++
-                if (creditor.amount < 0.01) cIdx++
+                await setCached(sharedCacheKey, sharedData, 3600)
             }
 
             return res.status(200).json({
                 personal: personalExpenses,
-                shared: sharedExpenses,
-                debts: debtsList,
-                members: members.map(m => m.user)
+                shared: sharedData.shared,
+                debts: sharedData.debts,
+                members: sharedData.members
             })
         } catch (error: any) {
             console.error('Prisma Get Expenses Error:', error)
@@ -183,6 +201,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                         payerId
                     }
                 })
+                
+                await invalidateCache(`expenses:personal:${payerId}`)
+                
                 return res.status(200).json(expense)
             } else {
                 // Create shared group expense
@@ -233,6 +254,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 // Broadcast updates to server members
                 await pusherServer.trigger(`server-${serverId}`, 'expense-updated', { action: 'create', expense })
 
+                await invalidateCache(`expenses:shared:${serverId}`)
+
                 return res.status(200).json(expense)
             }
         } catch (error: any) {
@@ -262,6 +285,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             // Broadcast updates to server if it was a shared expense
             if (!expense.isPersonal && expense.serverId) {
                 await pusherServer.trigger(`server-${expense.serverId}`, 'expense-updated', { action: 'delete', expenseId })
+            }
+
+            if (expense.isPersonal) {
+                await invalidateCache(`expenses:personal:${expense.payerId}`)
+            } else if (expense.serverId) {
+                await invalidateCache(`expenses:shared:${expense.serverId}`)
             }
 
             return res.status(200).json({ success: true })

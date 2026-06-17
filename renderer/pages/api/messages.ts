@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../lib/db'
 import { pusherServer } from '../../lib/pusher-server'
+import { getCached, setCached, invalidateCache } from '../../lib/redis-cache'
 
 // Helper to authenticate request using Authorization header token
 async function authenticate(req: NextApiRequest) {
@@ -86,6 +87,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             // Trigger real-time message event via Pusher
             await pusherServer.trigger(`channel-${channelId}`, 'new-message', message)
 
+            await invalidateCache(`messages:${channelId}`)
+
             return res.status(201).json(message)
         } catch (error: any) {
             console.error('API Messages POST error:', error)
@@ -101,6 +104,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         try {
+            const cacheKey = `messages:${channelId}`
+            if (!cursor) {
+                const cached = await getCached<{ items: any[]; nextCursor: string | null }>(cacheKey)
+                if (cached) {
+                    return res.status(200).json(cached)
+                }
+            }
+
             const limit = 15
             let messages
 
@@ -149,10 +160,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 nextCursor = messages[limit - 1].id
             }
 
-            return res.status(200).json({
+            const payload = {
                 items: messages,
                 nextCursor,
-            })
+            }
+
+            if (!cursor) {
+                await setCached(cacheKey, payload, 600) // Cache for 10 minutes
+            }
+
+            return res.status(200).json(payload)
         } catch (error: any) {
             console.error('API Messages GET error:', error)
             return res.status(500).json({ error: error.message || 'Internal Server Error' })
@@ -206,6 +223,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             await pusherServer.trigger(`channel-${updatedMessage.channelId}`, 'update-message', updatedMessage)
 
+            await invalidateCache(`messages:${updatedMessage.channelId}`)
+
             return res.status(200).json(updatedMessage)
         } catch (error: any) {
             console.error('API Messages PATCH error:', error)
@@ -248,6 +267,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             })
 
             await pusherServer.trigger(`channel-${message.channelId}`, 'delete-message', { messageId })
+
+            await invalidateCache(`messages:${message.channelId}`)
 
             return res.status(200).json({ success: true })
         } catch (error: any) {

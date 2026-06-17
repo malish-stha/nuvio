@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
+import { invalidateCache } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -79,6 +80,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     // Notify both users in real-time
                     await pusherServer.trigger(`user-${currentUserId}`, 'friend-update', {})
                     await pusherServer.trigger(`user-${existing.senderId}`, 'friend-update', {})
+                    
+                    await invalidateCache(`friends:${currentUserId}`)
+                    await invalidateCache(`friends:${existing.senderId}`)
+
                     return res.status(200).json({ message: 'Friend request accepted', friendship: updated })
                 }
             }
@@ -95,6 +100,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Notify both users in real-time
         await pusherServer.trigger(`user-${currentUserId}`, 'friend-update', {})
         await pusherServer.trigger(`user-${receiverId}`, 'friend-update', {})
+
+        await invalidateCache(`friends:${currentUserId}`)
+        await invalidateCache(`friends:${receiverId}`)
 
         return res.status(200).json({ message: 'Friend request sent', friendship })
     } catch (error: any) {

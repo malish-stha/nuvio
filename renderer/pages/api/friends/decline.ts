@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
+import { invalidateCache } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -63,6 +64,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const otherUserId = friendship.senderId === currentUserId ? friendship.receiverId : friendship.senderId
         await pusherServer.trigger(`user-${currentUserId}`, 'friend-update', {})
         await pusherServer.trigger(`user-${otherUserId}`, 'friend-update', {})
+
+        await invalidateCache(`friends:${currentUserId}`)
+        await invalidateCache(`friends:${otherUserId}`)
 
         return res.status(200).json({ message: 'Friendship removed/cancelled successfully' })
     } catch (error: any) {

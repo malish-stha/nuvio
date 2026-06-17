@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '@/lib/db'
+import { invalidateWorkspaceForUser } from '@/lib/redis-cache'
 
 // Helper to authenticate request using Authorization header token
 async function authenticate(req: NextApiRequest) {
@@ -51,6 +52,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 bio: bio || null,
             },
         })
+
+        await invalidateWorkspaceForUser(userId)
 
         return res.status(200).json(updatedUser)
     } catch (error: any) {

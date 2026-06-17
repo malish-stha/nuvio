@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
+import { invalidateCache } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -83,6 +84,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             await pusherServer.trigger(`user-${currentUserId}`, 'friend-update', {})
             await pusherServer.trigger(`user-${otherId}`, 'friend-update', {})
 
+            await invalidateCache(`friends:${currentUserId}`)
+            await invalidateCache(`friends:${otherId}`)
+
             return res.status(200).json({ message: 'Unfriended successfully' })
         } catch (error: any) {
             return res.status(500).json({ error: error.message || 'Internal Server Error' })
@@ -108,6 +112,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 })
                 await pusherServer.trigger(`user-${currentUserId}`, 'friend-update', {})
                 await pusherServer.trigger(`user-${targetUserId}`, 'friend-update', {})
+
+                await invalidateCache(`friends:${currentUserId}`)
+                await invalidateCache(`friends:${targetUserId}`)
+
                 return res.status(200).json({ message: 'User blocked', friendship: blockRecord })
             } catch (error: any) {
                 return res.status(500).json({ error: error.message || 'Internal Server Error' })

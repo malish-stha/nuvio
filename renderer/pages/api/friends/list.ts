@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
+import { getCached, setCached } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -36,6 +37,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
+        const cacheKey = `friends:${currentUserId}`
+        const cachedFriends = await getCached<{ friends: any[]; pendingIncoming: any[]; pendingOutgoing: any[] }>(cacheKey)
+        if (cachedFriends) {
+            return res.status(200).json(cachedFriends)
+        }
+
         const friendships = await db.friendship.findMany({
             where: {
                 OR: [
@@ -89,11 +96,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
         })
 
-        return res.status(200).json({
+        const payload = {
             friends,
             pendingIncoming,
             pendingOutgoing
-        })
+        }
+
+        await setCached(cacheKey, payload, 1800) // Cache for 30 minutes
+
+        return res.status(200).json(payload)
     } catch (error: any) {
         console.error('API Friends list error:', error)
         return res.status(500).json({ error: error.message || 'Internal Server Error' })

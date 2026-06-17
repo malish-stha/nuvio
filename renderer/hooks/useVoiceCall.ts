@@ -217,6 +217,12 @@ export const useVoiceCall = ({
       })
     }
 
+    if (screenStreamRef.current) {
+      screenStreamRef.current.getVideoTracks().forEach(track => {
+        pc.addTrack(track, screenStreamRef.current!)
+      })
+    }
+
     peerConnectionsRef.current[peerId] = pc
     return pc
   }
@@ -471,6 +477,16 @@ export const useVoiceCall = ({
         } else {
           pc.addTrack(videoTrack, stream)
         }
+
+        // Trigger renegotiation offer
+        if (connectedVoiceChannel && connectedVoiceChannel.id) {
+          pc.createOffer()
+            .then(async (offer) => {
+              await pc.setLocalDescription(offer)
+              sendSignal(connectedVoiceChannel.id, 'offer', { sdp: offer }, peerId)
+            })
+            .catch(err => console.error('Error creating offer for screen share renegotiation:', err))
+        }
       }
     })
 
@@ -522,6 +538,16 @@ export const useVoiceCall = ({
             const sender = senders.find(s => s.track && s.track.kind === 'video')
             if (sender) {
               pc.removeTrack(sender)
+            }
+
+            // Trigger renegotiation offer to remove the video track on the remote end
+            if (connectedVoiceChannel && connectedVoiceChannel.id) {
+              pc.createOffer()
+                .then(async (offer) => {
+                  await pc.setLocalDescription(offer)
+                  sendSignal(connectedVoiceChannel.id, 'offer', { sdp: offer }, peerId)
+                })
+                .catch(err => console.error('Error creating offer for screen share stop renegotiation:', err))
             }
           } catch (e) {
             console.error("Error removing track from pc:", e)

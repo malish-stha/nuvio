@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
+import { invalidateWorkspaceForServer } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -75,6 +76,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 serverId
             }
         })
+
+        await invalidateWorkspaceForServer(serverId)
 
         return res.status(201).json(channel)
     } catch (error: any) {

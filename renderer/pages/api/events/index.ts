@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
+import { getCached, setCached, invalidateCache } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -36,6 +37,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ error: 'Missing serverId' })
         }
         try {
+            const cacheKey = `events:${serverId}`
+            const cachedEvents = await getCached<any[]>(cacheKey)
+            if (cachedEvents) {
+                return res.status(200).json(cachedEvents)
+            }
+
             const events = await db.event.findMany({
                 where: { serverId },
                 include: {
@@ -45,6 +52,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 },
                 orderBy: { startTime: 'asc' }
             })
+
+            await setCached(cacheKey, events, 3600) // Cache for 1 hour
+
             return res.status(200).json(events)
         } catch (error: any) {
             console.error('Prisma Get Events Error:', error)
@@ -77,6 +87,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             // Trigger real-time calendar updates
             await pusherServer.trigger(`server-${serverId}`, 'event-created', newEvent)
             
+            await invalidateCache(`events:${serverId}`)
+
             return res.status(200).json(newEvent)
         } catch (error: any) {
             console.error('Prisma Create Event Error:', error)
@@ -103,6 +115,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             // Trigger real-time deletion sync
             await pusherServer.trigger(`server-${event.serverId}`, 'event-deleted', { eventId })
+
+            await invalidateCache(`events:${event.serverId}`)
 
             return res.status(200).json({ success: true })
         } catch (error: any) {

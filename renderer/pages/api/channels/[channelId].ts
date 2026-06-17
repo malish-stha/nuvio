@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
+import { invalidateWorkspaceForServer } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -64,9 +65,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return res.status(400).json({ error: 'The default general channel cannot be deleted' })
         }
 
+        const serverId = channel.serverId
         await db.channel.delete({
             where: { id: channelId }
         })
+
+        await invalidateWorkspaceForServer(serverId)
 
         return res.status(200).json({ success: true, message: 'Channel deleted successfully' })
     } catch (error: any) {

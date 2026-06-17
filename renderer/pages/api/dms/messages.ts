@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next'
 import { verifyToken } from '@clerk/backend'
 import { db } from '../../../lib/db'
 import { pusherServer } from '../../../lib/pusher-server'
+import { getCached, setCached, invalidateCache } from '../../../lib/redis-cache'
 
 async function authenticate(req: NextApiRequest) {
     const authHeader = req.headers.authorization
@@ -85,6 +86,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             // Trigger real-time DM sync via Pusher
             await pusherServer.trigger(`dm-${dmChannelId}`, 'new-dm', message)
 
+            await invalidateCache(`dms:${dmChannelId}`)
+
             return res.status(201).json(message)
         } catch (error: any) {
             console.error('API DM Messages POST error:', error)
@@ -112,6 +115,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             if (!dmChannel) {
                 return res.status(403).json({ error: 'Forbidden: You are not a participant in this DM channel' })
+            }
+
+            const cacheKey = `dms:${dmChannelId}`
+            if (!cursor) {
+                const cached = await getCached<{ items: any[]; nextCursor: string | null }>(cacheKey)
+                if (cached) {
+                    return res.status(200).json(cached)
+                }
             }
 
             const limit = 15
@@ -168,10 +179,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 nextCursor = messages[limit - 1].id
             }
 
-            return res.status(200).json({
+            const payload = {
                 items: messages,
                 nextCursor,
-            })
+            }
+
+            if (!cursor) {
+                await setCached(cacheKey, payload, 600) // Cache for 10 minutes
+            }
+
+            return res.status(200).json(payload)
         } catch (error: any) {
             console.error('API DM Messages GET error:', error)
             return res.status(500).json({ error: error.message || 'Internal Server Error' })
@@ -218,6 +235,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
             await pusherServer.trigger(`dm-${updatedMessage.dmChannelId}`, 'update-dm', updatedMessage)
 
+            await invalidateCache(`dms:${updatedMessage.dmChannelId}`)
+
             return res.status(200).json(updatedMessage)
         } catch (error: any) {
             console.error('API DM Messages PATCH error:', error)
@@ -250,6 +269,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             })
 
             await pusherServer.trigger(`dm-${message.dmChannelId}`, 'delete-dm', { messageId })
+
+            await invalidateCache(`dms:${message.dmChannelId}`)
 
             return res.status(200).json({ success: true })
         } catch (error: any) {
